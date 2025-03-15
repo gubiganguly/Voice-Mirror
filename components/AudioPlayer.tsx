@@ -19,6 +19,7 @@ export function AudioPlayer({ audioUrl, title, className, isLoading = false }: A
   const [currentTime, setCurrentTime] = useState(0);
   const [volume, setVolume] = useState(1);
   const [isLoaded, setIsLoaded] = useState(false);
+  const [isFirstPlay, setIsFirstPlay] = useState(true);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -86,12 +87,13 @@ export function AudioPlayer({ audioUrl, title, className, isLoading = false }: A
     }
   }, [audioUrl]);
 
-  // Track playback time during play
+  // Update the time tracking mechanism in the AudioPlayer component
   useEffect(() => {
     if (isPlaying && audioRef.current) {
       const updateTime = () => {
         if (audioRef.current) {
-          setCurrentTime(audioRef.current.currentTime);
+          const newTime = audioRef.current.currentTime;
+          setCurrentTime(newTime);
           
           // If duration becomes available during playback, update it
           if (!isLoaded && !isNaN(audioRef.current.duration) && audioRef.current.duration > 0) {
@@ -101,10 +103,70 @@ export function AudioPlayer({ audioUrl, title, className, isLoading = false }: A
         }
       };
       
-      const timeInterval = setInterval(updateTime, 100);
-      return () => clearInterval(timeInterval);
+      // Run immediately once to ensure we don't wait for the first interval
+      updateTime();
+      
+      // Use a more frequent update interval for smoother progress
+      const timeInterval = setInterval(updateTime, 50);
+      intervalRef.current = timeInterval;
+      
+      return () => {
+        if (intervalRef.current) {
+          clearInterval(intervalRef.current);
+          intervalRef.current = null;
+        }
+      };
     }
   }, [isPlaying, isLoaded]);
+
+  // Add a more robust timeupdate event handler
+  useEffect(() => {
+    const audio = audioRef.current;
+    
+    const handleTimeUpdate = () => {
+      if (audio) {
+        const newTime = audio.currentTime;
+        // Only update if it's a valid number
+        if (isFinite(newTime) && !isNaN(newTime)) {
+          setCurrentTime(newTime);
+        }
+      }
+    };
+    
+    const handleEnded = () => {
+      setIsPlaying(false);
+      setCurrentTime(0);
+      
+      // Make sure we clear any active intervals
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
+    };
+
+    if (audio) {
+      // Remove any existing listeners first to avoid duplicates
+      audio.removeEventListener('timeupdate', handleTimeUpdate);
+      audio.removeEventListener('ended', handleEnded);
+      
+      // Add new listeners
+      audio.addEventListener('timeupdate', handleTimeUpdate);
+      audio.addEventListener('ended', handleEnded);
+    }
+
+    return () => {
+      if (audio) {
+        audio.removeEventListener('timeupdate', handleTimeUpdate);
+        audio.removeEventListener('ended', handleEnded);
+      }
+      
+      // Also ensure we clear intervals on unmount
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
+    };
+  }, [audioRef.current]); // Only re-attach when the audio element changes
 
   useEffect(() => {
     const audio = audioRef.current;
@@ -127,63 +189,131 @@ export function AudioPlayer({ audioUrl, title, className, isLoading = false }: A
       }
     };
     
-    const handleTimeUpdate = () => {
-      if (audio) {
-        setCurrentTime(audio.currentTime);
-        
-        // Also check duration during playback
-        if (!isLoaded && !isNaN(audio.duration) && audio.duration > 0) {
-          setDuration(audio.duration);
-          setIsLoaded(true);
-        }
-      }
-    };
-
     // Events
     if (audio) {
       audio.addEventListener('loadedmetadata', handleLoadMetadata);
       audio.addEventListener('canplay', handleCanPlay);
-      audio.addEventListener('timeupdate', handleTimeUpdate);
-      audio.addEventListener('durationchange', handleLoadMetadata);
-      audio.addEventListener('ended', () => {
-        setIsPlaying(false);
-        setCurrentTime(0);
-      });
     }
 
     return () => {
       if (audio) {
         audio.removeEventListener('loadedmetadata', handleLoadMetadata);
         audio.removeEventListener('canplay', handleCanPlay);
-        audio.removeEventListener('timeupdate', handleTimeUpdate);
-        audio.removeEventListener('durationchange', handleLoadMetadata);
-        audio.removeEventListener('ended', () => {
-          setIsPlaying(false);
-          setCurrentTime(0);
-        });
       }
     };
   }, [audioUrl, isLoaded]);
 
+  // Add this to ensure duration is properly loaded on first play
+  useEffect(() => {
+    // This function will force a duration check
+    const forceDurationCheck = () => {
+      const audio = audioRef.current;
+      if (audio && audioUrl) {
+        // Try to get duration more aggressively
+        if (!isNaN(audio.duration) && audio.duration > 0) {
+          console.log("Duration check - valid duration:", audio.duration);
+          setDuration(audio.duration);
+          setIsLoaded(true);
+        } else {
+          console.log("Duration check - still invalid:", audio.duration);
+          
+          // If audio is already loaded but duration is invalid, try to load again
+          if (audio.readyState >= 2) {
+            console.log("Audio is loaded but duration invalid, trying to reload");
+            // Sometimes reloading helps establish duration
+            audio.load();
+          }
+        }
+      }
+    };
+    
+    // Run initial check
+    forceDurationCheck();
+    
+    // Also run it after a short delay, which sometimes helps capture duration
+    const durationCheckTimeout = setTimeout(forceDurationCheck, 500);
+    
+    return () => clearTimeout(durationCheckTimeout);
+  }, [audioUrl, isLoaded]);
+
+  // Reset first play state when audio URL changes
+  useEffect(() => {
+    setIsFirstPlay(true);
+  }, [audioUrl]);
+
+  // Add this specialized effect that ensures perfect sync between audio time and slider
+  useEffect(() => {
+    if (!audioUrl || !audioRef.current) return;
+    
+    // Create a function to forcibly synchronize the slider with audio playback
+    const syncTimeWithPlayback = () => {
+      const audio = audioRef.current;
+      if (!audio) return;
+      
+      // Force a duration update if it's not correct
+      if (duration !== audio.duration && !isNaN(audio.duration) && audio.duration > 0) {
+        setDuration(audio.duration);
+        setIsLoaded(true);
+        console.log("Forced duration update:", audio.duration);
+      }
+      
+      // This is the critical part - directly update currentTime from the audio element
+      // ONLY when the audio is actually playing
+      if (!audio.paused && isFinite(audio.currentTime) && !isNaN(audio.currentTime)) {
+        setCurrentTime(audio.currentTime);
+      }
+    };
+    
+    // Use a high-precision, frequent update interval for smoother progress
+    // This is especially important for the first play
+    const preciseInterval = setInterval(syncTimeWithPlayback, 16); // ~60fps for smooth updates
+    
+    // For the first play, we'll use a more frequent update to ensure it's in sync
+    if (isFirstPlay && isPlaying) {
+      // Adjust the duration one more time right after playback starts
+      setTimeout(() => {
+        const audio = audioRef.current;
+        if (audio && !isNaN(audio.duration) && audio.duration > 0) {
+          setDuration(audio.duration);
+          console.log("First play duration check:", audio.duration);
+        }
+      }, 100);
+    }
+    
+    return () => {
+      clearInterval(preciseInterval);
+    };
+  }, [audioUrl, isPlaying, isFirstPlay, duration]);
+
+  // Update the play function to ensure we have valid duration before playing
   const togglePlayPause = () => {
     const audio = audioRef.current;
     
-    if (!audio || !audioUrl) {
-      console.log('Cannot play: audio ref or URL missing', { audioRef: !!audio, audioUrl });
-      return;
-    }
+    if (!audio || !audioUrl) return;
     
     if (isPlaying) {
       audio.pause();
+      setIsPlaying(false);
     } else {
-      // Try playing with a catch for any browser autoplay policy issues
-      console.log('Attempting to play audio...');
-      audio.play().catch(error => {
-        console.error("Error playing audio:", error);
-      });
+      // Make sure we have an accurate duration before playing
+      if (!isNaN(audio.duration) && audio.duration > 0 && audio.duration !== duration) {
+        setDuration(audio.duration);
+        setIsLoaded(true);
+      }
+      
+      // Use a more reliable play method that overcomes browser autoplay policies
+      const safePlay = async () => {
+        try {
+          await audio.play();
+          setIsPlaying(true);
+          setIsFirstPlay(false);
+        } catch (err) {
+          console.error("Error playing audio:", err);
+        }
+      };
+      
+      safePlay();
     }
-    
-    setIsPlaying(!isPlaying);
   };
 
   const resetPlayback = () => {
@@ -200,11 +330,19 @@ export function AudioPlayer({ audioUrl, title, className, isLoading = false }: A
   const handleSliderChange = (value: number[]) => {
     const audio = audioRef.current;
     
-    if (!audio) return;
+    if (!audio || !audioUrl) return;
     
+    // Make sure we have a valid number
     const newTime = value[0];
-    audio.currentTime = newTime;
-    setCurrentTime(newTime);
+    if (!isFinite(newTime) || isNaN(newTime)) {
+      console.error('Invalid slider value:', newTime);
+      return;
+    }
+    
+    // Ensure the time is within valid range
+    const safeTime = Math.max(0, Math.min(newTime, audio.duration || 0));
+    audio.currentTime = safeTime;
+    setCurrentTime(safeTime);
   };
 
   const handleVolumeChange = (value: number[]) => {
@@ -217,9 +355,15 @@ export function AudioPlayer({ audioUrl, title, className, isLoading = false }: A
     setVolume(newVolume);
   };
 
+  // Update the formatTime function to be even more robust
   const formatTime = (time: number) => {
     // Make sure we have a valid time
     if (isNaN(time) || !isFinite(time) || time < 0) return "00:00";
+    
+    // Ensure we don't exceed the actual duration to avoid UI inconsistencies
+    if (duration > 0 && time > duration) {
+      time = duration;
+    }
     
     const minutes = Math.floor(time / 60);
     const seconds = Math.floor(time % 60);
@@ -227,8 +371,16 @@ export function AudioPlayer({ audioUrl, title, className, isLoading = false }: A
     return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
   };
 
-  // Use a calculated max duration to avoid infinity issues
-  const maxDuration = isLoaded && duration > 0 ? duration : 100;
+  // Update the maxDuration calculation to ensure it's always a valid number
+  const ensureFiniteNumber = (value: number, fallback: number = 0): number => {
+    return isFinite(value) && !isNaN(value) ? value : fallback;
+  };
+
+  // Use a fallback value for duration
+  const validDuration = ensureFiniteNumber(duration, 100);
+
+  // Update the maxDuration calculation
+  const maxDuration = isLoaded && validDuration > 0 ? validDuration : 100;
 
   const handleDownload = () => {
     if (!audioUrl) return;
@@ -273,41 +425,6 @@ export function AudioPlayer({ audioUrl, title, className, isLoading = false }: A
     );
   };
 
-  // Add a manual play button to the mirrored voice tab for debugging
-  const renderDebugButton = () => {
-    if (audioUrl && !isPlaying) {
-      return (
-        <div className="mt-2">
-          <Button 
-            variant="outline"
-            size="sm"
-            className="w-full"
-            onClick={() => {
-              const audio = audioRef.current;
-              if (audio) {
-                console.log('Manual play attempt');
-                console.log('Audio element state:', {
-                  src: audio.src,
-                  readyState: audio.readyState,
-                  paused: audio.paused,
-                  duration: audio.duration,
-                  hasError: audio.error !== null
-                });
-                
-                audio.play().catch(err => {
-                  console.error('Manual play error:', err);
-                });
-              }
-            }}
-          >
-            Debug: Force Play
-          </Button>
-        </div>
-      );
-    }
-    return null;
-  };
-
   return (
     <div className={cn("p-4 rounded-lg border bg-card text-card-foreground shadow-sm", className)}>
       <div className="mb-3 font-medium flex items-center justify-between">
@@ -315,7 +432,7 @@ export function AudioPlayer({ audioUrl, title, className, isLoading = false }: A
         <div className="flex items-center gap-2">
           <Volume2 className="h-4 w-4 text-muted-foreground" />
           <Slider
-            value={[volume]}
+            value={[ensureFiniteNumber(volume, 1)]}
             max={1}
             step={0.01}
             onValueChange={handleVolumeChange}
@@ -367,7 +484,7 @@ export function AudioPlayer({ audioUrl, title, className, isLoading = false }: A
         
         <div className="flex-1 mx-2">
           <Slider
-            value={[currentTime]}
+            value={[ensureFiniteNumber(currentTime, 0)]}
             max={maxDuration}
             step={0.1}
             onValueChange={handleSliderChange}
@@ -377,7 +494,7 @@ export function AudioPlayer({ audioUrl, title, className, isLoading = false }: A
         </div>
         
         <div className="text-xs font-mono">
-          {formatTime(currentTime)} / {formatTime(duration)}
+          {formatTime(ensureFiniteNumber(currentTime))} / {formatTime(ensureFiniteNumber(duration))}
         </div>
       </div>
       
@@ -392,8 +509,6 @@ export function AudioPlayer({ audioUrl, title, className, isLoading = false }: A
           Generating your AI voice...
         </div>
       )}
-      
-      {renderDebugButton()}
     </div>
   );
 } 

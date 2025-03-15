@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { AppHeader } from "@/components/AppHeader";
 import { AudioRecorder } from "@/components/AudioRecorder";
 import { AudioWaveform } from "@/components/AudioWaveform";
@@ -12,8 +12,46 @@ import { Check, Mic, Wand2, PlayCircle, FileText, Loader2, AlertCircle } from "l
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
+import { Settings } from "@/components/Settings";
+import { VoiceSettingsProvider, useVoiceSettings } from "@/contexts/VoiceSettingsContext";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+
+// Create a custom hook for the welcome info
+export function useWelcomeInfo() {
+  // Start with modal closed (false) to avoid hydration issues
+  const [showWelcomeInfo, setShowWelcomeInfo] = useState(false);
+  
+  // Force the modal to open on component mount
+  useEffect(() => {
+    // Force modal to show on every page load/refresh
+    setShowWelcomeInfo(true);
+  }, []);
+  
+  const openWelcomeInfo = useCallback(() => {
+    setShowWelcomeInfo(true);
+  }, []);
+  
+  const closeWelcomeInfo = useCallback(() => {
+    setShowWelcomeInfo(false);
+  }, []);
+  
+  return {
+    showWelcomeInfo,
+    setShowWelcomeInfo,
+    openWelcomeInfo,
+    closeWelcomeInfo
+  };
+}
 
 export default function Home() {
+  return (
+    <VoiceSettingsProvider>
+      <HomeContent />
+    </VoiceSettingsProvider>
+  );
+}
+
+function HomeContent() {
   const [isRecording, setIsRecording] = useState(false);
   const [audioUrl, setAudioUrl] = useState<string | undefined>(undefined);
   const [transcribedText, setTranscribedText] = useState("");
@@ -27,6 +65,10 @@ export default function Home() {
   const [mirroredAudioUrl, setMirroredAudioUrl] = useState<string | null>(null);
   const [generatingTts, setGeneratingTts] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { voiceModel, promptProcessing, getActiveModelId, isPresetModelAvailable } = useVoiceSettings();
+  
+  // Welcome modal state
+  const { showWelcomeInfo, setShowWelcomeInfo, closeWelcomeInfo } = useWelcomeInfo();
 
   const handleRecordingStart = async () => {
     setIsRecording(true);
@@ -149,11 +191,17 @@ export default function Home() {
 
   const generateTTS = async () => {
     console.log('==== GENERATE TTS DEBUGGING ====');
-    console.log('1. Current model ID state:', modelId);
     
-    if (!modelId) {
+    // Get the active model ID based on the selected voice type
+    const activeModelId = getActiveModelId(modelId);
+    console.log('1. Current voice model setting:', voiceModel);
+    console.log('1a. Active model ID:', activeModelId);
+    
+    if (!activeModelId) {
       console.error('Error: No model ID available');
-      setError('Voice model is missing. Please generate a voice model first.');
+      setError(voiceModel === "cloned" 
+        ? 'Voice model is missing. Please generate a voice model first.' 
+        : 'Could not load the selected voice model. Please try a different one.');
       return;
     }
     
@@ -165,12 +213,44 @@ export default function Home() {
     
     console.log('2. Starting TTS generation');
     console.log('3. Text length:', transcribedText.length);
+    console.log('4. Prompt processing setting:', promptProcessing ? 'ENABLED' : 'DISABLED');
     
     setGeneratingTts(true);
     setError(null);
     
     try {
-      console.log('4. Making request to /api/text-to-speech endpoint');
+      // Only process if prompt processing is enabled
+      let textToProcess = transcribedText;
+      
+      if (promptProcessing === true) {
+        console.log('5. APPLYING prompt processing with GPT-4o');
+        try {
+          const processResponse = await fetch('/api/process-transcript', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ text: transcribedText }),
+          });
+          
+          if (!processResponse.ok) {
+            console.warn('Warning: Transcript processing failed, using original text');
+          } else {
+            const processData = await processResponse.json();
+            textToProcess = processData.processedText;
+            console.log('6. Processing complete. Original length:', processData.originalLength, 
+                        'Processed length:', processData.processedLength);
+          }
+        } catch (processError) {
+          console.error('Error during transcript processing:', processError);
+          console.warn('Using original text due to processing error');
+        }
+      } else {
+        console.log('5. SKIPPING prompt processing, using original text');
+      }
+      
+      console.log('7. Making request to /api/text-to-speech endpoint with:', 
+                  promptProcessing ? 'processed text' : 'original text');
       const requestStart = Date.now();
       const response = await fetch('/api/text-to-speech', {
         method: 'POST',
@@ -178,35 +258,35 @@ export default function Home() {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          text: transcribedText,
-          modelId: modelId,
+          text: textToProcess,
+          modelId: activeModelId,
         }),
       });
       const requestDuration = Date.now() - requestStart;
-      console.log(`5. Received response in ${requestDuration}ms with status:`, response.status);
-      console.log('6. Response headers:', JSON.stringify(Object.fromEntries([...response.headers.entries()])));
+      console.log(`8. Received response in ${requestDuration}ms with status:`, response.status);
+      console.log('9. Response headers:', JSON.stringify(Object.fromEntries([...response.headers.entries()])));
       
       if (!response.ok) {
         let errorMessage = 'Failed to generate speech';
         try {
           const errorData = await response.json();
           errorMessage = errorData.error || errorMessage;
-          console.error('7. Error response (JSON):', errorData);
+          console.error('10. Error response (JSON):', errorData);
         } catch (e) {
           const errorText = await response.text();
-          console.error('7. Error response (Text):', errorText);
+          console.error('10. Error response (Text):', errorText);
         }
         throw new Error(errorMessage);
       }
       
       // Try to determine content type from headers
       const contentType = response.headers.get('content-type');
-      console.log('7. Response content type:', contentType);
+      console.log('11. Response content type:', contentType);
       
       // Get the audio data as a blob
-      console.log('8. Extracting blob from response');
+      console.log('12. Extracting blob from response');
       const audioBlob = await response.blob();
-      console.log('9. Created blob:', {
+      console.log('13. Created blob:', {
         type: audioBlob.type,
         size: audioBlob.size,
         hasData: audioBlob.size > 0
@@ -215,27 +295,27 @@ export default function Home() {
       // Make sure the blob has a correct MIME type for audio
       let finalBlob = audioBlob;
       if (!audioBlob.type || !audioBlob.type.includes('audio/')) {
-        console.log('10. Blob has incorrect MIME type, creating new blob with audio/mpeg type');
+        console.log('14. Blob has incorrect MIME type, creating new blob with audio/mpeg type');
         finalBlob = new Blob([await audioBlob.arrayBuffer()], { type: 'audio/mpeg' });
       }
       
       // Revoke previous URL to avoid memory leaks
       if (mirroredAudioUrl) {
-        console.log('11. Revoking previous audio URL:', mirroredAudioUrl);
+        console.log('15. Revoking previous audio URL:', mirroredAudioUrl);
         URL.revokeObjectURL(mirroredAudioUrl);
       }
       
       // Create and store the new URL
       const url = URL.createObjectURL(finalBlob);
-      console.log('12. Created new audio URL:', url);
+      console.log('16. Created new audio URL:', url);
       setMirroredAudioUrl(url);
       
       // Verify the URL works by testing with a fetch
       try {
-        console.log('13. Verifying blob URL with fetch');
+        console.log('17. Verifying blob URL with fetch');
         const testFetch = await fetch(url);
-        console.log('14. Blob URL fetch status:', testFetch.status);
-        console.log('15. Blob URL content-type:', testFetch.headers.get('content-type'));
+        console.log('18. Blob URL fetch status:', testFetch.status);
+        console.log('19. Blob URL content-type:', testFetch.headers.get('content-type'));
       } catch (e) {
         console.error('Failed to verify blob URL:', e);
       }
@@ -258,7 +338,26 @@ export default function Home() {
     }
   };
 
-  // Replace the TabsWithTTSButton function with this updated version
+  // Simple text cleanup function (placeholder - would be more sophisticated in reality)
+  const cleanupText = (text: string): string => {
+    // Replace common filler words and clean up stutters
+    return text
+      .replace(/\b(um|uh|er|ah|like|you know|I mean)\b/gi, '')
+      .replace(/(\w+)-\1+/g, '$1')  // Reduces stuttering repetitions
+      .replace(/\s{2,}/g, ' ')      // Remove multiple spaces
+      .trim();
+  };
+
+  // You might want to show the selected voice model in the UI
+  const getVoiceModelName = () => {
+    switch(voiceModel) {
+      case "male": return "Male Voice";
+      case "female": return "Female Voice";
+      default: return "Your Voice (Cloned)";
+    }
+  };
+
+  // Update the TabsWithConsistentUI component to restore the mirrored voice functionality
   const TabsWithConsistentUI = () => {
     const [activeTab, setActiveTab] = useState("original");
     
@@ -270,6 +369,7 @@ export default function Home() {
         console.log('Mirrored tab selected. Model ID:', modelId, 'Has transcription:', !!transcribedText);
         console.log('Existing mirrored URL:', mirroredAudioUrl, 'Generating TTS:', generatingTts);
         
+        // Auto-generate TTS when switching to mirrored tab if needed
         if (modelId && transcribedText && !mirroredAudioUrl && !generatingTts) {
           console.log('Triggering TTS generation...');
           await generateTTS();
@@ -283,89 +383,55 @@ export default function Home() {
         className="w-full"
         onValueChange={handleLocalTabChange}
       >
-        <TabsList className="grid w-full grid-cols-2">
-          <TabsTrigger value="original">Original Voice</TabsTrigger>
-          <TabsTrigger value="mirrored" disabled={!modelGenerated}>Mirrored Voice</TabsTrigger>
+        <TabsList className="grid grid-cols-2">
+          <TabsTrigger value="original">
+            <PlayCircle className="mr-2 h-4 w-4" />
+            Original Voice
+          </TabsTrigger>
+          <TabsTrigger value="mirrored" disabled={!modelGenerated}>
+            <FileText className="mr-2 h-4 w-4" />
+            Mirrored Voice
+          </TabsTrigger>
         </TabsList>
+        
         <TabsContent value="original" className="mt-4">
           <AudioPlayer 
             audioUrl={audioUrl}
-            title="Your Recording"
+            title="Original Recording"
+            key={`original-${audioUrl}`}
           />
+          <p className="text-sm text-muted-foreground mt-2 text-center">
+            Your original voice recording
+          </p>
         </TabsContent>
+        
         <TabsContent value="mirrored" className="mt-4">
           <AudioPlayer 
             audioUrl={mirroredAudioUrl}
-            title="AI Voice Playback"
+            title={`AI Voice Playback (${getVoiceModelName().toLowerCase()})`}
             isLoading={generatingTts}
+            key={`mirrored-${mirroredAudioUrl}`}
           />
           <p className="text-sm text-muted-foreground mt-2 text-center">
-            Text-to-speech using your voice model
+            Text-to-speech using {getVoiceModelName().toLowerCase()}
+            {promptProcessing && mirroredAudioUrl && (
+              <span className="text-primary ml-1">• Enhanced clarity</span>
+            )}
           </p>
-          {!generatingTts && !mirroredAudioUrl && modelGenerated && (
+          
+          {!generatingTts && !mirroredAudioUrl && (
             <div className="mt-2">
               <Button 
                 variant="outline"
                 size="sm"
                 className="w-full"
                 onClick={generateTTS}
+                disabled={(voiceModel === "cloned" && !modelGenerated) || 
+                        (voiceModel !== "cloned" && !isPresetModelAvailable(voiceModel))}
               >
                 <Wand2 className="mr-2 h-4 w-4" />
-                Generate TTS manually
+                Generate TTS
               </Button>
-            </div>
-          )}
-          
-          {/* Add a debug panel */}
-          {modelGenerated && (
-            <div className="mt-3 p-3 border rounded-md bg-muted/50">
-              <h4 className="text-sm font-medium mb-2">Debug Info</h4>
-              <div className="text-xs space-y-1">
-                <div><span className="font-mono">Model ID:</span> {modelId || '(none)'}</div>
-                <div><span className="font-mono">Has TTS URL:</span> {mirroredAudioUrl ? 'Yes' : 'No'}</div>
-                <div><span className="font-mono">Transcription Length:</span> {transcribedText.length} chars</div>
-                <div className="grid grid-cols-2 gap-2 mt-2">
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    className="text-xs h-8"
-                    onClick={() => {
-                      window.location.reload();
-                    }}
-                  >
-                    Force Refresh Page
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    className="text-xs h-8"
-                    onClick={() => {
-                      console.log('Attempting to clear model and regenerate');
-                      setModelId(null);
-                      setModelGenerated(false);
-                      setMirroredAudioUrl(null);
-                      setCurrentStep(2);
-                    }}
-                  >
-                    Reset Model State
-                  </Button>
-                </div>
-                {mirroredAudioUrl && (
-                  <div className="mt-2">
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      className="w-full text-xs h-8"
-                      onClick={() => {
-                        console.log('Opening audio in new tab:', mirroredAudioUrl);
-                        window.open(mirroredAudioUrl, '_blank');
-                      }}
-                    >
-                      Open Audio URL in New Tab
-                    </Button>
-                  </div>
-                )}
-              </div>
             </div>
           )}
         </TabsContent>
@@ -376,7 +442,10 @@ export default function Home() {
   return (
     <div className="min-h-screen flex flex-col bg-background">
       <div className="container mx-auto px-4 max-w-5xl">
-        <AppHeader />
+        <div className="flex items-center justify-between">
+          <AppHeader />
+          <Settings />
+        </div>
         
         <main className="flex-1 py-4">
           {error && (
@@ -503,6 +572,49 @@ export default function Home() {
           <p>Voice Mirroring Project &copy; {new Date().getFullYear()}</p>
         </footer>
       </div>
+
+      {/* Welcome Info Modal */}
+      <Dialog open={showWelcomeInfo} onOpenChange={setShowWelcomeInfo}>
+        <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="text-2xl font-bold text-primary text-center">
+              Welcome to Arkenza Voice Mirror
+            </DialogTitle>
+          </DialogHeader>
+          
+          <div className="space-y-4 text-muted-foreground text-base py-4">
+            <p className="leading-relaxed">
+              The Arkenza Voice Mirror transcribes your spoken words into text and then
+              reconstructs the transcribed words into synthetic speech in a cloned voice.
+            </p>
+            
+            <p className="leading-relaxed">
+              The transcription processing is performed by AI software components that remove
+              disfluencies including repeated words, repeated syllables, prolongations, blocks, and
+              interruptions ('um, uh, like').
+            </p>
+            
+            <p className="leading-relaxed">
+              The transcription process will not preserve your actual wording, but it should do a
+              reasonably good job at preserving the intended meaning of your speech.
+            </p>
+            
+            <p className="leading-relaxed">
+              At the present time, the Voice Mirror's transcription accuracy is not perfect. So don't use
+              the Voice Mirror for high-value conversations such as legal proceedings.
+            </p>
+          </div>
+          
+          <DialogFooter>
+            <Button 
+              onClick={closeWelcomeInfo} 
+              className="w-full transition-all duration-300 hover:scale-105"
+            >
+              Get Started
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
