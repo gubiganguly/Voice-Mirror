@@ -15,33 +15,7 @@ import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 import { Settings } from "@/components/Settings";
 import { VoiceSettingsProvider, useVoiceSettings } from "@/contexts/VoiceSettingsContext";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-
-// Create a custom hook for the welcome info
-export function useWelcomeInfo() {
-  // Start with modal closed (false) to avoid hydration issues
-  const [showWelcomeInfo, setShowWelcomeInfo] = useState(false);
-  
-  // Force the modal to open on component mount
-  useEffect(() => {
-    // Force modal to show on every page load/refresh
-    setShowWelcomeInfo(true);
-  }, []);
-  
-  const openWelcomeInfo = useCallback(() => {
-    setShowWelcomeInfo(true);
-  }, []);
-  
-  const closeWelcomeInfo = useCallback(() => {
-    setShowWelcomeInfo(false);
-  }, []);
-  
-  return {
-    showWelcomeInfo,
-    setShowWelcomeInfo,
-    openWelcomeInfo,
-    closeWelcomeInfo
-  };
-}
+import { useWelcomeInfo } from "@/lib/hooks/useWelcomeInfo";
 
 export default function Home() {
   return (
