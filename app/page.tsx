@@ -32,26 +32,72 @@ function HomeContent() {
   const [audioStream, setAudioStream] = useState<MediaStream | undefined>(undefined);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [currentStep, setCurrentStep] = useState(1);
-  const [generatingModel, setGeneratingModel] = useState(false);
-  const [modelGenerated, setModelGenerated] = useState(false);
-  const [modelId, setModelId] = useState<string | null>(null);
   const [audioBlobData, setAudioBlobData] = useState<Blob | null>(null);
   const [mirroredAudioUrl, setMirroredAudioUrl] = useState<string | null>(null);
   const [generatingTts, setGeneratingTts] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const { voiceModel, promptProcessing, getActiveModelId, isPresetModelAvailable } = useVoiceSettings();
+  const { 
+    voiceModel, 
+    promptProcessing, 
+    getActiveModelId, 
+    isPresetModelAvailable,
+    clonedModels,
+    selectedClonedModelId
+  } = useVoiceSettings();
   
   // Welcome modal state
   const { showWelcomeInfo, setShowWelcomeInfo, closeWelcomeInfo } = useWelcomeInfo();
+
+  // Add a reference to track the last used model
+  const lastUsedModelRef = useRef<{
+    voiceType: string; 
+    modelId: string | null;
+  }>({
+    voiceType: '',
+    modelId: null
+  });
+  
+  // Add effect to clear mirrored audio when voice model changes
+  useEffect(() => {
+    const currentModelId = getActiveModelId();
+    
+    // If we have a different model than last time...
+    if (lastUsedModelRef.current.voiceType !== voiceModel || 
+        lastUsedModelRef.current.modelId !== currentModelId) {
+      
+      console.log('Voice model changed:',
+        `${lastUsedModelRef.current.voiceType} → ${voiceModel}`,
+        `(Model ID: ${currentModelId})`
+      );
+      
+      // Only clear if we had a previous TTS generated
+      if (mirroredAudioUrl) {
+        console.log('Clearing previous TTS audio due to model change');
+        
+        // Revoke previous URL to avoid memory leaks
+        URL.revokeObjectURL(mirroredAudioUrl);
+        setMirroredAudioUrl(null);
+      }
+    }
+    
+    // Update our reference with current values
+    lastUsedModelRef.current = {
+      voiceType: voiceModel,
+      modelId: currentModelId
+    };
+  }, [voiceModel, selectedClonedModelId, getActiveModelId]);
 
   const handleRecordingStart = async () => {
     setIsRecording(true);
     setTranscribedText("");
     // Reset TTS related states when starting a new recording
-    setModelGenerated(false);
-    setModelId(null);
     setMirroredAudioUrl(null);
     setError(null);
+    
+    // Clear the previous audio URL to avoid memory leaks
+    if (mirroredAudioUrl) {
+      URL.revokeObjectURL(mirroredAudioUrl);
+    }
     
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -67,7 +113,9 @@ function HomeContent() {
     const url = URL.createObjectURL(audioBlob);
     setAudioUrl(url);
     setAudioBlobData(audioBlob);
-    setCurrentStep(2); // Move to next step automatically
+    
+    // Move to transcription step
+    setCurrentStep(2);
     
     // Start transcription process
     setIsTranscribing(true);
@@ -89,6 +137,11 @@ function HomeContent() {
       
       const data = await response.json();
       setTranscribedText(data.text);
+      
+      // Move to playback step after successful transcription
+      setTimeout(() => {
+        setCurrentStep(3);
+      }, 500);
     } catch (error) {
       console.error('Error transcribing audio:', error);
       setTranscribedText('Error transcribing audio. Please try again.');
@@ -98,83 +151,18 @@ function HomeContent() {
     }
   };
 
-  const handleGenerateModel = async () => {
-    if (!audioBlobData) {
-      setError("No audio recording found. Please record audio first.");
-      return;
-    }
-    
-    console.log('==== GENERATE MODEL DEBUGGING ====');
-    console.log('1. Starting voice model generation');
-    
-    setGeneratingModel(true);
-    setError(null);
-    
-    try {
-      const formData = new FormData();
-      formData.append('audio', audioBlobData, 'recording.webm');
-      
-      // If we have transcription, include it for better results
-      if (transcribedText) {
-        console.log('2. Including transcription, length:', transcribedText.length);
-        formData.append('transcription', transcribedText);
-      }
-      
-      console.log('3. Making request to /api/voice-model endpoint');
-      const response = await fetch('/api/voice-model', {
-        method: 'POST',
-        body: formData,
-      });
-      
-      console.log('4. Voice model API response status:', response.status);
-      
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to create voice model');
-      }
-      
-      const data = await response.json();
-      console.log('5. Voice model created successfully:', data);
-      
-      if (data.modelId) {
-        console.log('6. Setting model ID:', data.modelId);
-        setModelId(data.modelId);
-        setModelGenerated(true);
-        setCurrentStep(3);
-      } else {
-        console.error('6. Error: Still no model ID in response:', data);
-        throw new Error('Could not determine model ID from API response');
-      }
-    } catch (error) {
-      console.error('Error generating voice model:', error);
-      
-      let errorMessage = 'Please try again.';
-      if (error instanceof Error) {
-        errorMessage = error.message;
-      } else if (typeof error === 'string') {
-        errorMessage = error;
-      } else if (error && typeof error === 'object' && 'message' in error) {
-        errorMessage = (error as { message: string }).message;
-      }
-      
-      setError(`Failed to generate voice model: ${errorMessage}`);
-    } finally {
-      setGeneratingModel(false);
-    }
-  };
-
   const generateTTS = async () => {
     console.log('==== GENERATE TTS DEBUGGING ====');
     
     // Get the active model ID based on the selected voice type
-    const activeModelId = getActiveModelId(modelId);
+    const activeModelId = getActiveModelId();
     console.log('1. Current voice model setting:', voiceModel);
     console.log('1a. Active model ID:', activeModelId);
     
     if (!activeModelId) {
       console.error('Error: No model ID available');
       setError(voiceModel === "cloned" 
-        ? 'Voice model is missing. Please generate a voice model first.' 
+        ? 'Voice model is missing. Please create a voice model in settings first.' 
         : 'Could not load the selected voice model. Please try a different one.');
       return;
     }
@@ -325,29 +313,89 @@ function HomeContent() {
   // You might want to show the selected voice model in the UI
   const getVoiceModelName = () => {
     switch(voiceModel) {
-      case "male": return "Male Voice";
-      case "female": return "Female Voice";
-      default: return "Your Voice (Cloned)";
+      case "male": 
+        return "Male Voice";
+      case "female": 
+        return "Female Voice";
+      case "cloned": {
+        // Find the selected model name
+        const selectedModel = clonedModels.find(model => model.id === selectedClonedModelId);
+        return selectedModel ? selectedModel.name : "Your Voice";
+      }
+      default: 
+        return "Selected Voice";
     }
   };
+
+  // Store audio blob in sessionStorage for access from Settings
+  useEffect(() => {
+    if (audioBlobData) {
+      try {
+        // Convert blob to base64 for storage
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          const base64data = reader.result;
+          if (typeof base64data === 'string') {
+            console.log("Storing audio in sessionStorage", { 
+              size: audioBlobData.size,
+              type: audioBlobData.type,
+              base64Length: base64data.length
+            });
+            sessionStorage.setItem("lastRecordedAudio", base64data);
+          }
+        };
+        reader.readAsDataURL(audioBlobData);
+      } catch (error) {
+        console.error("Error storing audio data:", error);
+      }
+    }
+    
+    // Store transcription for voice model generation
+    if (transcribedText) {
+      sessionStorage.setItem("lastTranscription", transcribedText);
+    }
+  }, [audioBlobData, transcribedText]);
 
   // Update the TabsWithConsistentUI component to restore the mirrored voice functionality
   const TabsWithConsistentUI = () => {
     const [activeTab, setActiveTab] = useState("original");
     
+    // Auto-generate TTS if model changes while on mirrored tab
+    useEffect(() => {
+      // If user is on the mirrored tab and we don't have audio yet
+      if (activeTab === 'mirrored' && !mirroredAudioUrl && !generatingTts && transcribedText) {
+        console.log('Auto-generating TTS after model change');
+        generateTTS();
+      }
+    }, [activeTab, mirroredAudioUrl, voiceModel, selectedClonedModelId]);
+
     const handleLocalTabChange = async (value: string) => {
       console.log('Tab changed to:', value);
       setActiveTab(value);
       
       if (value === 'mirrored') {
-        console.log('Mirrored tab selected. Model ID:', modelId, 'Has transcription:', !!transcribedText);
+        console.log('Mirrored tab selected. Has transcription:', !!transcribedText);
         console.log('Existing mirrored URL:', mirroredAudioUrl, 'Generating TTS:', generatingTts);
         
         // Auto-generate TTS when switching to mirrored tab if needed
-        if (modelId && transcribedText && !mirroredAudioUrl && !generatingTts) {
+        if (transcribedText && !mirroredAudioUrl && !generatingTts) {
           console.log('Triggering TTS generation...');
           await generateTTS();
         }
+      }
+    };
+
+    // Check if mirrored voice option should be available
+    const isMirroredAvailable = () => {
+      // TTS is available if we have a transcription and:
+      // 1. For preset voices (male/female) - the preset ID is available
+      // 2. For cloned voice - the selected cloned model exists
+      if (!transcribedText) return false;
+      
+      if (voiceModel === "cloned") {
+        return !!getActiveModelId();
+      } else {
+        return true; // Preset models are always available
       }
     };
 
@@ -362,7 +410,7 @@ function HomeContent() {
             <PlayCircle className="mr-2 h-4 w-4" />
             Original Voice
           </TabsTrigger>
-          <TabsTrigger value="mirrored" disabled={!modelGenerated}>
+          <TabsTrigger value="mirrored" disabled={!isMirroredAvailable()}>
             <FileText className="mr-2 h-4 w-4" />
             Mirrored Voice
           </TabsTrigger>
@@ -382,7 +430,7 @@ function HomeContent() {
         <TabsContent value="mirrored" className="mt-4">
           <AudioPlayer 
             audioUrl={mirroredAudioUrl}
-            title={`AI Voice Playback (${getVoiceModelName().toLowerCase()})`}
+            title={`AI Voice Playback (${getVoiceModelName()})`}
             isLoading={generatingTts}
             key={`mirrored-${mirroredAudioUrl}`}
           />
@@ -400,8 +448,7 @@ function HomeContent() {
                 size="sm"
                 className="w-full"
                 onClick={generateTTS}
-                disabled={(voiceModel === "cloned" && !modelGenerated) || 
-                        (voiceModel !== "cloned" && !isPresetModelAvailable(voiceModel))}
+                disabled={!isMirroredAvailable()}
               >
                 <Wand2 className="mr-2 h-4 w-4" />
                 Generate TTS
@@ -460,48 +507,23 @@ function HomeContent() {
               </CardContent>
             </Card>
 
-            {/* Step 2: Generate Voice Model */}
+            {/* Step 2: View Transcription */}
             <Card className={cn(
               "transition-all duration-300",
               currentStep === 2 ? "ring-2 ring-primary/20" : "",
               !audioUrl ? "opacity-50 pointer-events-none" : ""
             )}>
               <CardContent className="py-4 px-5">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-lg font-semibold flex items-center gap-2">
-                    <div className="flex items-center justify-center w-7 h-7 rounded-full bg-primary text-primary-foreground text-sm font-medium">2</div>
-                    <span>Generate your voice model</span>
-                  </h3>
-                  <Button 
-                    variant="default" 
-                    size="sm"
-                    className="relative overflow-hidden group whitespace-nowrap"
-                    disabled={!audioUrl || generatingModel || modelGenerated}
-                    onClick={handleGenerateModel}
-                  >
-                    {generatingModel ? (
-                      <>
-                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                        Generating...
-                      </>
-                    ) : modelGenerated ? (
-                      <>
-                        <Check className="mr-2 h-4 w-4" />
-                        Model generated
-                      </>
-                    ) : (
-                      <>
-                        <Wand2 className="mr-2 h-4 w-4 transition-transform duration-300 group-hover:rotate-45" />
-                        Generate Voice Model
-                      </>
-                    )}
-                    {generatingModel && (
-                      <div className="absolute bottom-0 left-0 h-1 bg-primary-foreground/30 w-full">
-                        <div className="h-full bg-primary-foreground animate-progress"></div>
-                      </div>
-                    )}
-                  </Button>
-                </div>
+                <h3 className="text-lg font-semibold mb-3 flex items-center gap-2">
+                  <div className="flex items-center justify-center w-7 h-7 rounded-full bg-primary text-primary-foreground text-sm font-medium">2</div>
+                  <span>View transcription</span>
+                </h3>
+                <TranscriptionDisplay 
+                  isTranscribing={isTranscribing} 
+                  isRecording={isRecording}
+                  text={transcribedText}
+                  className="min-h-[100px] max-h-[200px] overflow-y-auto"
+                />
               </CardContent>
             </Card>
 
@@ -517,26 +539,6 @@ function HomeContent() {
                   <span>Playback your audio</span>
                 </h3>
                 <TabsWithConsistentUI />
-              </CardContent>
-            </Card>
-
-            {/* Step 4: View Transcription */}
-            <Card className={cn(
-              "transition-all duration-300",
-              currentStep === 4 ? "ring-2 ring-primary/20" : "",
-              !audioUrl ? "opacity-50 pointer-events-none" : ""
-            )}>
-              <CardContent className="py-4 px-5">
-                <h3 className="text-lg font-semibold mb-3 flex items-center gap-2">
-                  <div className="flex items-center justify-center w-7 h-7 rounded-full bg-primary text-primary-foreground text-sm font-medium">4</div>
-                  <span>View transcription</span>
-                </h3>
-                <TranscriptionDisplay 
-                  isTranscribing={isTranscribing} 
-                  isRecording={isRecording}
-                  text={transcribedText}
-                  className="min-h-[100px] max-h-[200px] overflow-y-auto"
-                />
               </CardContent>
             </Card>
           </div>
@@ -592,4 +594,3 @@ function HomeContent() {
     </div>
   );
 }
-
