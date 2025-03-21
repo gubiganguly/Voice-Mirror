@@ -87,6 +87,16 @@ function HomeContent() {
     };
   }, [voiceModel, selectedClonedModelId, getActiveModelId]);
 
+  // Add this effect after the model change effect
+  // Auto-generate TTS when transcription is available or model changes
+  useEffect(() => {
+    // If we have a transcription and no mirrored audio yet, auto-generate TTS
+    if (transcribedText && !mirroredAudioUrl && !generatingTts && currentStep === 3) {
+      console.log('Auto-generating TTS after changes detected');
+      generateTTS();
+    }
+  }, [transcribedText, mirroredAudioUrl, voiceModel, selectedClonedModelId, currentStep]);
+
   const handleRecordingStart = async () => {
     setIsRecording(true);
     setTranscribedText("");
@@ -356,108 +366,18 @@ function HomeContent() {
     }
   }, [audioBlobData, transcribedText]);
 
-  // Update the TabsWithConsistentUI component to restore the mirrored voice functionality
-  const TabsWithConsistentUI = () => {
-    const [activeTab, setActiveTab] = useState("original");
+  // You might also want to update the UI to show when TTS generation is available
+  const isMirroredAvailable = () => {
+    // TTS is available if we have a transcription and:
+    // 1. For preset voices (male/female) - the preset ID is available
+    // 2. For cloned voice - the selected cloned model exists
+    if (!transcribedText) return false;
     
-    // Auto-generate TTS if model changes while on mirrored tab
-    useEffect(() => {
-      // If user is on the mirrored tab and we don't have audio yet
-      if (activeTab === 'mirrored' && !mirroredAudioUrl && !generatingTts && transcribedText) {
-        console.log('Auto-generating TTS after model change');
-        generateTTS();
-      }
-    }, [activeTab, mirroredAudioUrl, voiceModel, selectedClonedModelId]);
-
-    const handleLocalTabChange = async (value: string) => {
-      console.log('Tab changed to:', value);
-      setActiveTab(value);
-      
-      if (value === 'mirrored') {
-        console.log('Mirrored tab selected. Has transcription:', !!transcribedText);
-        console.log('Existing mirrored URL:', mirroredAudioUrl, 'Generating TTS:', generatingTts);
-        
-        // Auto-generate TTS when switching to mirrored tab if needed
-        if (transcribedText && !mirroredAudioUrl && !generatingTts) {
-          console.log('Triggering TTS generation...');
-          await generateTTS();
-        }
-      }
-    };
-
-    // Check if mirrored voice option should be available
-    const isMirroredAvailable = () => {
-      // TTS is available if we have a transcription and:
-      // 1. For preset voices (male/female) - the preset ID is available
-      // 2. For cloned voice - the selected cloned model exists
-      if (!transcribedText) return false;
-      
-      if (voiceModel === "cloned") {
-        return !!getActiveModelId();
-      } else {
-        return true; // Preset models are always available
-      }
-    };
-
-    return (
-      <Tabs 
-        defaultValue="original" 
-        className="w-full"
-        onValueChange={handleLocalTabChange}
-      >
-        <TabsList className="grid grid-cols-2">
-          <TabsTrigger value="original">
-            <PlayCircle className="mr-2 h-4 w-4" />
-            Original Voice
-          </TabsTrigger>
-          <TabsTrigger value="mirrored" disabled={!isMirroredAvailable()}>
-            <FileText className="mr-2 h-4 w-4" />
-            Mirrored Voice
-          </TabsTrigger>
-        </TabsList>
-        
-        <TabsContent value="original" className="mt-4">
-          <AudioPlayer 
-            audioUrl={audioUrl}
-            title="Original Recording"
-            key={`original-${audioUrl}`}
-          />
-          <p className="text-sm text-muted-foreground mt-2 text-center">
-            Your original voice recording
-          </p>
-        </TabsContent>
-        
-        <TabsContent value="mirrored" className="mt-4">
-          <AudioPlayer 
-            audioUrl={mirroredAudioUrl}
-            title={`AI Voice Playback (${getVoiceModelName()})`}
-            isLoading={generatingTts}
-            key={`mirrored-${mirroredAudioUrl}`}
-          />
-          <p className="text-sm text-muted-foreground mt-2 text-center">
-            Text-to-speech using {getVoiceModelName().toLowerCase()}
-            {promptProcessing && mirroredAudioUrl && (
-              <span className="text-primary ml-1">• Enhanced clarity</span>
-            )}
-          </p>
-          
-          {!generatingTts && !mirroredAudioUrl && (
-            <div className="mt-2">
-              <Button 
-                variant="outline"
-                size="sm"
-                className="w-full"
-                onClick={generateTTS}
-                disabled={!isMirroredAvailable()}
-              >
-                <Wand2 className="mr-2 h-4 w-4" />
-                Generate TTS
-              </Button>
-            </div>
-          )}
-        </TabsContent>
-      </Tabs>
-    );
+    if (voiceModel === "cloned") {
+      return !!getActiveModelId();
+    } else {
+      return true; // Preset models are always available
+    }
   };
 
   return (
@@ -538,21 +458,94 @@ function HomeContent() {
                   <div className="flex items-center justify-center w-7 h-7 rounded-full bg-primary text-primary-foreground text-sm font-medium">3</div>
                   <span>Playback your audio</span>
                 </h3>
-                <TabsWithConsistentUI />
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* Original Voice Player */}
+                  <div className="space-y-2">
+                    <h4 className="font-medium flex items-center gap-2 text-sm">
+                      <PlayCircle className="h-4 w-4" />
+                      Original Voice
+                    </h4>
+                    <AudioPlayer 
+                      audioUrl={audioUrl}
+                      title="Original Recording"
+                    />
+                    <p className="text-xs text-muted-foreground text-center">
+                      Your original voice recording
+                    </p>
+                  </div>
+                  
+                  {/* Mirrored Voice Player */}
+                  <div className="space-y-2">
+                    <h4 className="font-medium flex items-center gap-2 text-sm">
+                      <FileText className="h-4 w-4" />
+                      Mirrored Voice
+                    </h4>
+                    <AudioPlayer 
+                      audioUrl={mirroredAudioUrl}
+                      title={`AI Voice (${getVoiceModelName()})`}
+                      isLoading={generatingTts}
+                    />
+                    <p className="text-xs text-muted-foreground text-center">
+                      {mirroredAudioUrl ? (
+                        <>
+                          Text-to-speech using {getVoiceModelName().toLowerCase()}
+                          {promptProcessing && <span className="text-primary ml-1">• Enhanced clarity</span>}
+                        </>
+                      ) : generatingTts ? (
+                        "Generating mirrored voice..."
+                      ) : isMirroredAvailable() ? (
+                        "Ready to generate"
+                      ) : (
+                        "Voice model not available"
+                      )}
+                    </p>
+                    
+                    {!generatingTts && !mirroredAudioUrl && transcribedText && (
+                      <Button 
+                        variant="outline"
+                        size="sm"
+                        className="w-full mt-2"
+                        onClick={generateTTS}
+                        disabled={!isMirroredAvailable()}
+                      >
+                        <Wand2 className="mr-2 h-4 w-4" />
+                        Generate TTS
+                      </Button>
+                    )}
+                  </div>
+                </div>
               </CardContent>
             </Card>
           </div>
         </main>
         
         <footer className="py-4 text-center text-sm text-muted-foreground">
-          <p>Voice Mirroring Project &copy; {new Date().getFullYear()}</p>
+          <div className="flex items-center justify-center gap-4">
+            <div className="w-20 h-20 transition-all duration-300 hover:scale-105">
+              <img 
+                src="/Arkenza_trademark_final.png" 
+                alt="Arkenza Logo" 
+                className="object-contain w-full h-full drop-shadow-sm"
+              />
+            </div>
+            <p>Voice Mirroring Project &copy; {new Date().getFullYear()}</p>
+          </div>
         </footer>
       </div>
 
       {/* Welcome Info Modal */}
       <Dialog open={showWelcomeInfo} onOpenChange={setShowWelcomeInfo}>
         <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
+          <div className="absolute top-4 left-4 w-16 h-16 transition-all duration-300 hover:scale-110">
+            <img 
+              src="/Arkenza_trademark_final.png" 
+              alt="Arkenza Logo" 
+              className="object-contain w-full h-full drop-shadow-sm animate-fadeIn"
+            />
+          </div>
+          
+          <DialogHeader className="mt-2 pt-4">
             <DialogTitle className="text-2xl font-bold text-primary text-center">
               Welcome to Arkenza Voice Mirror
             </DialogTitle>

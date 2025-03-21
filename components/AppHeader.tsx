@@ -75,7 +75,15 @@ export function AppHeader() {
       {/* Info Modal */}
       <Dialog open={showInfo} onOpenChange={setShowInfo}>
         <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
+          <div className="absolute top-4 left-4 w-16 h-16 transition-all duration-300 hover:scale-110">
+            <img 
+              src="/Arkenza_trademark_final.png" 
+              alt="Arkenza Logo" 
+              className="object-contain w-full h-full drop-shadow-sm animate-fadeIn"
+            />
+          </div>
+          
+          <DialogHeader className="mt-2 pt-4">
             <DialogTitle className="text-2xl font-bold text-primary text-center">
               Welcome to Arkenza Voice Mirror
             </DialogTitle>

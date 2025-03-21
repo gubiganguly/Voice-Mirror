@@ -59,11 +59,16 @@ export default {
   		animation: {
   			'ping-slow': 'ping 2s cubic-bezier(0, 0, 0.2, 1) infinite',
   			'sound-wave': 'soundWave 1.5s ease-in-out infinite',
+  			'fadeIn': 'fadeIn 0.6s ease-in-out',
   		},
   		keyframes: {
   			soundWave: {
   				'0%, 100%': { height: '0.75rem' },
   				'50%': { height: '2rem' },
+  			},
+  			fadeIn: {
+  				'0%': { opacity: '0', transform: 'translateY(-10px)' },
+  				'100%': { opacity: '1', transform: 'translateY(0)' },
   			},
   		},
   	}
