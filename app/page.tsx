@@ -36,6 +36,8 @@ function HomeContent() {
   const [mirroredAudioUrl, setMirroredAudioUrl] = useState<string | null>(null);
   const [generatingTts, setGeneratingTts] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [recordingCount, setRecordingCount] = useState(0);
+  const [showSurveyModal, setShowSurveyModal] = useState(false);
   const { 
     voiceModel, 
     promptProcessing, 
@@ -123,6 +125,15 @@ function HomeContent() {
     const url = URL.createObjectURL(audioBlob);
     setAudioUrl(url);
     setAudioBlobData(audioBlob);
+    
+    // Increment recording count
+    const newCount = recordingCount + 1;
+    setRecordingCount(newCount);
+    
+    // Check if we've reached 5 recordings and show the survey
+    if (newCount === 5) {
+      setShowSurveyModal(true);
+    }
     
     // Move to transcription step
     setCurrentStep(2);
@@ -380,6 +391,12 @@ function HomeContent() {
     }
   };
 
+  // Add a function to handle survey completion
+  const handleSurveyCompletion = () => {
+    setShowSurveyModal(false);
+    setRecordingCount(0); // Reset counter back to 0
+  };
+
   return (
     <div className="min-h-screen flex flex-col bg-background">
       <div className="container mx-auto px-4 max-w-5xl">
@@ -404,10 +421,26 @@ function HomeContent() {
               currentStep === 1 ? "ring-2 ring-primary/20" : ""
             )}>
               <CardContent className="py-4 px-5">
-                <h3 className="text-lg font-semibold mb-3 flex items-center gap-2">
-                  <div className="flex items-center justify-center w-7 h-7 rounded-full bg-primary text-primary-foreground text-sm font-medium">1</div>
-                  <span>Record your audio</span>
-                </h3>
+                <div className="flex justify-between items-center mb-3">
+                  <h3 className="text-lg font-semibold flex items-center gap-2">
+                    <div className="flex items-center justify-center w-7 h-7 rounded-full bg-primary text-primary-foreground text-sm font-medium">1</div>
+                    <span>Record your audio</span>
+                  </h3>
+                  
+                  {/* Recording counter indicator */}
+                  <div className="flex items-center gap-2">
+                    <div className="text-xs text-muted-foreground">
+                      Recordings: <span className="font-medium text-primary">{recordingCount}/5</span>
+                    </div>
+                    <div className="w-16 h-1.5 bg-muted rounded-full overflow-hidden">
+                      <div 
+                        className="h-full bg-primary transition-all duration-300" 
+                        style={{ width: `${(recordingCount / 5) * 100}%` }}
+                      />
+                    </div>
+                  </div>
+                </div>
+                
                 <div className="flex flex-col md:flex-row items-center gap-4">
                   <div className="flex flex-col items-center justify-center">
                     <AudioRecorder 
@@ -580,6 +613,69 @@ function HomeContent() {
               className="w-full transition-all duration-300 hover:scale-105"
             >
               Get Started
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Survey Modal */}
+      <Dialog open={showSurveyModal} onOpenChange={(open) => {
+        setShowSurveyModal(open);
+        if (!open) setRecordingCount(0); // Reset counter when modal is closed
+      }}>
+        <DialogContent className="sm:max-w-[600px]">
+          <DialogHeader>
+            <DialogTitle className="text-2xl font-bold text-primary text-center">
+              We'd love your feedback!
+            </DialogTitle>
+            <DialogDescription className="text-center pt-2">
+              You've used Voice Mirror 5 times. Could you share your experience with us?
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="space-y-6 py-4">
+            <div className="space-y-2">
+              <h4 className="font-medium">How would you rate your experience?</h4>
+              <div className="flex justify-between items-center px-6 py-2">
+                {[1, 2, 3, 4, 5].map((rating) => (
+                  <button 
+                    key={rating} 
+                    className="flex flex-col items-center gap-1 transition-all hover:scale-110"
+                  >
+                    <div className="w-10 h-10 rounded-full border-2 border-primary flex items-center justify-center text-primary hover:bg-primary hover:text-primary-foreground">
+                      {rating}
+                    </div>
+                    <span className="text-xs text-muted-foreground">
+                      {rating === 1 ? "Poor" : rating === 5 ? "Excellent" : ""}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+            
+            <div className="space-y-2">
+              <h4 className="font-medium">What do you like most about our app?</h4>
+              <textarea 
+                className="w-full min-h-[80px] rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                placeholder="Share your thoughts..."
+              />
+            </div>
+            
+            <div className="space-y-2">
+              <h4 className="font-medium">How can we improve?</h4>
+              <textarea 
+                className="w-full min-h-[80px] rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                placeholder="Your suggestions help us get better..."
+              />
+            </div>
+          </div>
+          
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button variant="outline" onClick={handleSurveyCompletion}>
+              Maybe later
+            </Button>
+            <Button onClick={handleSurveyCompletion}>
+              Submit feedback
             </Button>
           </DialogFooter>
         </DialogContent>
