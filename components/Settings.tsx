@@ -15,7 +15,9 @@ import {
   Trash2, 
   Wand2, 
   Loader2, 
-  CheckCircle 
+  CheckCircle,
+  Mic,
+  ArrowRight
 } from "lucide-react";
 import { 
   Drawer, 
@@ -36,6 +38,8 @@ import {
 import { useVoiceSettings, VoiceModelType, ClonedModel } from "@/contexts/VoiceSettingsContext";
 import { cn } from "@/lib/utils";
 import { format } from "date-fns";
+import { AudioRecorder } from "@/components/AudioRecorder";
+import { AudioWaveform } from "@/components/AudioWaveform";
 
 interface SettingsProps {
   className?: string;
@@ -70,7 +74,15 @@ export function Settings({ className }: SettingsProps) {
   const [newModelName, setNewModelName] = useState("");
   const [modelGenError, setModelGenError] = useState<string | null>(null);
   const [showModelDialog, setShowModelDialog] = useState(false);
-  const audioBlobRef = useRef<Blob | null>(null);
+  
+  // New states for recording flow
+  const [currentStep, setCurrentStep] = useState(1); // Step 1: Record, Step 2: Name, Step 3: Generate
+  const [isRecording, setIsRecording] = useState(false);
+  const [audioUrl, setAudioUrl] = useState<string | undefined>(undefined);
+  const [audioStream, setAudioStream] = useState<MediaStream | undefined>(undefined);
+  const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
+  const [transcribedText, setTranscribedText] = useState<string>("");
+  const [isTranscribing, setIsTranscribing] = useState(false);
 
   // Load available audio output devices
   useEffect(() => {
@@ -116,41 +128,103 @@ export function Settings({ className }: SettingsProps) {
     setOpen(false);
   };
 
-  const getAudioBlob = async (): Promise<Blob | null> => {
-    // Check if we already have a cached blob
-    if (audioBlobRef.current) {
-      return audioBlobRef.current;
-    }
+  // Handler for starting recording
+  const handleRecordingStart = async () => {
+    setIsRecording(true);
+    setModelGenError(null);
     
-    // Otherwise fetch from session storage (would be set in the main page)
     try {
-      const storedAudio = sessionStorage.getItem("lastRecordedAudio");
-      if (!storedAudio) {
-        return null;
-      }
-      
-      // Convert base64 to blob
-      const byteString = atob(storedAudio.split(',')[1]);
-      const mimeString = storedAudio.split(',')[0].split(':')[1].split(';')[0];
-      const ab = new ArrayBuffer(byteString.length);
-      const ia = new Uint8Array(ab);
-      
-      for (let i = 0; i < byteString.length; i++) {
-        ia[i] = byteString.charCodeAt(i);
-      }
-      
-      const blob = new Blob([ab], { type: mimeString });
-      audioBlobRef.current = blob;
-      return blob;
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      setAudioStream(stream);
     } catch (error) {
-      console.error("Error retrieving audio blob:", error);
-      return null;
+      console.error("Error accessing microphone:", error);
+      setModelGenError("Could not access microphone. Please check your permissions.");
     }
   };
 
+  // Handler for completing recording
+  const handleRecordingComplete = async (blob: Blob) => {
+    setIsRecording(false);
+    setAudioBlob(blob);
+    const url = URL.createObjectURL(blob);
+    setAudioUrl(url);
+    
+    // Optionally transcribe the audio using the API
+    setIsTranscribing(true);
+    
+    try {
+      // Create a FormData object to send the audio file
+      const formData = new FormData();
+      formData.append('audio', blob, 'recording.webm');
+      
+      // Send the audio to the whisper API endpoint
+      const response = await fetch('/api/whisper', {
+        method: 'POST',
+        body: formData,
+      });
+      
+      if (!response.ok) {
+        throw new Error(`Transcription failed: ${response.statusText}`);
+      }
+      
+      const data = await response.json();
+      setTranscribedText(data.text);
+    } catch (error) {
+      console.error('Error transcribing audio:', error);
+      setTranscribedText('');
+    } finally {
+      setIsTranscribing(false);
+      // Move to the next step to enter name
+      setCurrentStep(2);
+    }
+  };
+
+  // Move to next step
+  const goToNextStep = () => {
+    if (currentStep < 3) {
+      setCurrentStep(currentStep + 1);
+    }
+  };
+
+  // Go back to previous step
+  const goToPreviousStep = () => {
+    if (currentStep > 1) {
+      setCurrentStep(currentStep - 1);
+    }
+  };
+
+  // Reset the state when closing dialog
+  const handleCloseDialog = () => {
+    setShowModelDialog(false);
+    setCurrentStep(1);
+    setAudioBlob(null);
+    setAudioUrl(undefined);
+    setNewModelName("");
+    setModelGenError(null);
+    setModelGenerated(false);
+    setTranscribedText("");
+    
+    // Clear audio stream if it exists
+    if (audioStream) {
+      audioStream.getTracks().forEach(track => track.stop());
+      setAudioStream(undefined);
+    }
+    
+    // Revoke object URL to avoid memory leaks
+    if (audioUrl) {
+      URL.revokeObjectURL(audioUrl);
+    }
+  };
+
+  // Generate model using the newly recorded audio
   const handleGenerateModel = async () => {
     if (!newModelName.trim()) {
       setModelGenError("Please provide a name for your voice model");
+      return;
+    }
+
+    if (!audioBlob) {
+      setModelGenError("No audio recording found. Please record your voice first.");
       return;
     }
 
@@ -158,48 +232,19 @@ export function Settings({ className }: SettingsProps) {
     setModelGenError(null);
     
     try {
-      // Get the audio from sessionStorage
-      const audioData = sessionStorage.getItem("lastRecordedAudio");
-      const transcription = sessionStorage.getItem("lastTranscription") || "";
-      
-      if (!audioData) {
-        throw new Error("No audio data available. Please record audio first.");
-      }
-      
-      console.log("Retrieved audio data from session storage", { 
-        dataLength: audioData.length,
-        hasTranscription: !!transcription 
-      });
-      
-      // Convert the base64 data back to a blob with explicit type
-      // The format needs to match what was originally recorded (likely webm)
-      const base64Data = audioData.split(',')[1]; // Remove the data URL prefix
-      const binaryString = window.atob(base64Data);
-      const bytes = new Uint8Array(binaryString.length);
-      
-      for (let i = 0; i < binaryString.length; i++) {
-        bytes[i] = binaryString.charCodeAt(i);
-      }
-      
-      // Create blob with explicit MIME type
-      const audioBlob = new Blob([bytes], { type: 'audio/webm' });
-      
-      console.log("Created audio blob", { 
+      console.log("Creating voice model with recorded audio", { 
         size: audioBlob.size, 
-        type: audioBlob.type 
+        type: audioBlob.type,
+        hasTranscription: !!transcribedText
       });
-      
-      if (audioBlob.size === 0) {
-        throw new Error("Audio data is empty. Please try recording again.");
-      }
       
       // Create FormData
       const formData = new FormData();
       formData.append('audio', audioBlob, 'recording.webm');
       
       // Add transcription if available
-      if (transcription) {
-        formData.append('transcription', transcription);
+      if (transcribedText) {
+        formData.append('transcription', transcribedText);
       }
       
       // Send to server
@@ -220,10 +265,14 @@ export function Settings({ className }: SettingsProps) {
       if (data.modelId) {
         addClonedModel(data.modelId, newModelName);
         setModelGenerated(true);
-        setShowModelDialog(false);
         
         // Set the voice model to cloned
         setLocalVoiceModel("cloned");
+        
+        // Close the dialog after a delay to show success state
+        setTimeout(() => {
+          handleCloseDialog();
+        }, 1500);
       } else {
         throw new Error('No model ID returned from server');
       }
@@ -265,61 +314,159 @@ export function Settings({ className }: SettingsProps) {
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
                   <Label className="text-base">Voice Model</Label>
-                  <Dialog open={showModelDialog} onOpenChange={setShowModelDialog}>
+                  <Dialog open={showModelDialog} onOpenChange={(open) => {
+                    if (!open) {
+                      handleCloseDialog();
+                    } else {
+                      setShowModelDialog(true);
+                    }
+                  }}>
                     <DialogTrigger asChild>
                       <Button variant="outline" size="sm">
                         <Plus className="mr-2 h-4 w-4" />
                         Create Voice Model
                       </Button>
                     </DialogTrigger>
-                    <DialogContent>
+                    <DialogContent className="sm:max-w-[500px]">
                       <DialogHeader>
                         <DialogTitle>Create Voice Model</DialogTitle>
                         <DialogDescription>
-                          Create a custom voice model based on your recorded audio.
+                          {currentStep === 1 
+                            ? "Record a sample of your voice to create a custom voice model."
+                            : currentStep === 2 
+                            ? "Give your voice model a name."
+                            : "Create your custom voice model."}
                         </DialogDescription>
                       </DialogHeader>
                       
-                      <div className="space-y-4 py-4">
-                        <div className="space-y-2">
-                          <Label htmlFor="model-name">Model Name</Label>
-                          <Input
-                            id="model-name"
-                            placeholder="Enter a name for your voice model"
-                            value={newModelName}
-                            onChange={(e) => setNewModelName(e.target.value)}
-                          />
-                        </div>
-                        
-                        {modelGenError && (
-                          <div className="text-sm text-destructive">{modelGenError}</div>
-                        )}
-                      </div>
-                      
-                      <DialogFooter>
-                        <Button 
-                          onClick={handleGenerateModel}
-                          disabled={isGeneratingModel || modelGenerated || !newModelName.trim()}
-                          className="w-full"
-                        >
-                          {isGeneratingModel ? (
-                            <>
-                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                              Generating...
-                            </>
-                          ) : modelGenerated ? (
-                            <>
-                              <CheckCircle className="mr-2 h-4 w-4" />
-                              Created Successfully
-                            </>
-                          ) : (
-                            <>
-                              <Wand2 className="mr-2 h-4 w-4" />
-                              Generate Voice Model
-                            </>
+                      {/* Step 1: Record Audio */}
+                      {currentStep === 1 && (
+                        <div className="space-y-4 py-4">
+                          <div className="flex flex-col items-center gap-4">
+                            <div className="flex flex-col items-center justify-center">
+                              <AudioRecorder 
+                                onRecordingStart={handleRecordingStart}
+                                onRecordingComplete={handleRecordingComplete}
+                              />
+                            </div>
+                            
+                            <div className="w-full mt-2">
+                              <AudioWaveform 
+                                isRecording={isRecording}
+                                audioStream={audioStream}
+                                className="h-24 shadow-sm rounded-md overflow-hidden"
+                              />
+                            </div>
+                            
+                            <div className="text-sm text-muted-foreground text-center px-2">
+                              <p className="font-medium text-primary mb-2">Please read this passage aloud:</p>
+                              <div className="bg-muted/50 p-3 rounded-md border border-border text-foreground">
+                                "The voice is a remarkable instrument. Each person's voice has a unique quality and rhythm that makes it instantly recognizable. When we speak, we share not just our words, but also our emotions, our identity, and our presence in the world."
+                              </div>
+                            </div>
+                          </div>
+                          
+                          {modelGenError && (
+                            <div className="text-sm text-destructive mt-2">{modelGenError}</div>
                           )}
-                        </Button>
-                      </DialogFooter>
+                          
+                          {audioUrl && (
+                            <Button 
+                              onClick={goToNextStep} 
+                              className="w-full mt-4"
+                              variant="default"
+                            >
+                              Continue
+                              <ArrowRight className="ml-2 h-4 w-4" />
+                            </Button>
+                          )}
+                        </div>
+                      )}
+                      
+                      {/* Step 2: Enter Name */}
+                      {currentStep === 2 && (
+                        <div className="space-y-4 py-4">
+                          <div className="space-y-2">
+                            <Label htmlFor="model-name">Model Name</Label>
+                            <Input
+                              id="model-name"
+                              placeholder="Enter a name for your voice model"
+                              value={newModelName}
+                              onChange={(e) => setNewModelName(e.target.value)}
+                            />
+                          </div>
+                          
+                          {modelGenError && (
+                            <div className="text-sm text-destructive">{modelGenError}</div>
+                          )}
+                          
+                          <div className="flex justify-between pt-2">
+                            <Button 
+                              variant="outline" 
+                              onClick={goToPreviousStep}
+                            >
+                              Back
+                            </Button>
+                            <Button 
+                              onClick={goToNextStep}
+                              disabled={!newModelName.trim()}
+                            >
+                              Continue
+                            </Button>
+                          </div>
+                        </div>
+                      )}
+                      
+                      {/* Step 3: Generate Model */}
+                      {currentStep === 3 && (
+                        <div className="space-y-4 py-4">
+                          <div className="text-center space-y-2">
+                            <p>Ready to create your voice model!</p>
+                            <div className="text-sm text-muted-foreground">
+                              <strong>Voice Sample:</strong> {isTranscribing ? "Analyzing..." : transcribedText ? `"${transcribedText.slice(0, 60)}${transcribedText.length > 60 ? '...' : ''}"` : "No transcription available"}
+                            </div>
+                            <div className="text-sm font-medium">
+                              <strong>Model Name:</strong> {newModelName}
+                            </div>
+                          </div>
+                          
+                          {modelGenError && (
+                            <div className="text-sm text-destructive">{modelGenError}</div>
+                          )}
+                          
+                          <div className="flex justify-between pt-2">
+                            <Button 
+                              variant="outline" 
+                              onClick={goToPreviousStep}
+                              disabled={isGeneratingModel}
+                            >
+                              Back
+                            </Button>
+                            <Button 
+                              onClick={handleGenerateModel}
+                              disabled={isGeneratingModel || modelGenerated || !newModelName.trim() || !audioBlob}
+                              className="min-w-32"
+                            >
+                              {isGeneratingModel ? (
+                                <>
+                                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                  Generating...
+                                </>
+                              ) : modelGenerated ? (
+                                <>
+                                  <CheckCircle className="mr-2 h-4 w-4" />
+                                  Created Successfully
+                                </>
+                              ) : (
+                                <>
+                                  <Wand2 className="mr-2 h-4 w-4" />
+                                  Generate Voice Model
+                                </>
+                              )}
+                            </Button>
+                          </div>
+                        </div>
+                      )}
                     </DialogContent>
                   </Dialog>
                 </div>

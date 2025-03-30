@@ -16,6 +16,7 @@ import { Settings } from "@/components/Settings";
 import { VoiceSettingsProvider, useVoiceSettings } from "@/contexts/VoiceSettingsContext";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useWelcomeInfo } from "@/lib/hooks/useWelcomeInfo";
+import { addSurvey } from "@/lib/firebase/surveys/surveyModel";
 
 export default function Home() {
   return (
@@ -38,6 +39,11 @@ function HomeContent() {
   const [error, setError] = useState<string | null>(null);
   const [recordingCount, setRecordingCount] = useState(0);
   const [showSurveyModal, setShowSurveyModal] = useState(false);
+  const [surveyRating, setSurveyRating] = useState<number | null>(null);
+  const [surveyPositiveFeedback, setSurveyPositiveFeedback] = useState("");
+  const [surveyImprovementFeedback, setSurveyImprovementFeedback] = useState("");
+  const [isSubmittingSurvey, setIsSubmittingSurvey] = useState(false);
+  const [surveySubmitted, setSurveySubmitted] = useState(false);
   const { 
     voiceModel, 
     promptProcessing, 
@@ -58,6 +64,9 @@ function HomeContent() {
     voiceType: '',
     modelId: null
   });
+  
+  // Store recording durations
+  const recordingDurationsRef = useRef<number[]>([]);
   
   // Add effect to clear mirrored audio when voice model changes
   useEffect(() => {
@@ -129,6 +138,17 @@ function HomeContent() {
     // Increment recording count
     const newCount = recordingCount + 1;
     setRecordingCount(newCount);
+    
+    // Store the recording duration if available from the lastRecordingDuration in session storage
+    const lastDuration = sessionStorage.getItem("lastRecordingDuration");
+    if (lastDuration) {
+      const duration = parseInt(lastDuration, 10);
+      recordingDurationsRef.current.push(duration);
+      // Keep only the last 5 durations
+      if (recordingDurationsRef.current.length > 5) {
+        recordingDurationsRef.current = recordingDurationsRef.current.slice(-5);
+      }
+    }
     
     // Check if we've reached 5 recordings and show the survey
     if (newCount === 5) {
@@ -391,10 +411,61 @@ function HomeContent() {
     }
   };
 
-  // Add a function to handle survey completion
+  // Handle survey submission
+  const handleSurveySubmission = async () => {
+    // Make sure required fields are filled
+    if (surveyRating === null) {
+      // Show error or alert that rating is required
+      return;
+    }
+    
+    setIsSubmittingSurvey(true);
+    
+    try {
+      // Prepare the survey data
+      const surveyData = {
+        rating: surveyRating,
+        positiveFeedback: surveyPositiveFeedback,
+        improvementFeedback: surveyImprovementFeedback
+      };
+      
+      // Submit to Firestore
+      await addSurvey(surveyData, recordingDurationsRef.current);
+      
+      // Reset the survey form
+      setSurveyRating(null);
+      setSurveyPositiveFeedback("");
+      setSurveyImprovementFeedback("");
+      recordingDurationsRef.current = [];
+      
+      // Show success state
+      setSurveySubmitted(true);
+      
+      // Close the modal after a delay
+      setTimeout(() => {
+        setShowSurveyModal(false);
+        setSurveySubmitted(false);
+        setRecordingCount(0); // Reset counter
+      }, 2000);
+      
+    } catch (error) {
+      console.error("Error submitting survey:", error);
+      // Show error message to user
+    } finally {
+      setIsSubmittingSurvey(false);
+    }
+  };
+
+  // Update the handleSurveyCompletion function
   const handleSurveyCompletion = () => {
+    // This function now just closes the modal without submitting data
     setShowSurveyModal(false);
     setRecordingCount(0); // Reset counter back to 0
+    
+    // Reset survey form
+    setSurveyRating(null);
+    setSurveyPositiveFeedback("");
+    setSurveyImprovementFeedback("");
   };
 
   return (
@@ -467,10 +538,41 @@ function HomeContent() {
               !audioUrl ? "opacity-50 pointer-events-none" : ""
             )}>
               <CardContent className="py-4 px-5">
-                <h3 className="text-lg font-semibold mb-3 flex items-center gap-2">
-                  <div className="flex items-center justify-center w-7 h-7 rounded-full bg-primary text-primary-foreground text-sm font-medium">2</div>
-                  <span>View transcription</span>
-                </h3>
+                <div className="flex justify-between items-center mb-3">
+                  <h3 className="text-lg font-semibold flex items-center gap-2">
+                    <div className="flex items-center justify-center w-7 h-7 rounded-full bg-primary text-primary-foreground text-sm font-medium">2</div>
+                    <span>View transcription</span>
+                  </h3>
+                  
+                  {/* Download Transcript Button */}
+                  {transcribedText && !isTranscribing && (
+                    <Button 
+                      variant="outline" 
+                      size="sm"
+                      onClick={() => {
+                        // Create a blob with the transcribed text
+                        const blob = new Blob([transcribedText], { type: 'text/plain' });
+                        const url = URL.createObjectURL(blob);
+                        
+                        // Create a temporary link and trigger download
+                        const link = document.createElement('a');
+                        link.href = url;
+                        link.download = `transcript-${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.txt`;
+                        document.body.appendChild(link);
+                        link.click();
+                        
+                        // Clean up
+                        document.body.removeChild(link);
+                        URL.revokeObjectURL(url);
+                      }}
+                      className="text-xs flex items-center gap-1 transition-all hover:scale-105"
+                    >
+                      <FileText className="h-3.5 w-3.5" />
+                      Download
+                    </Button>
+                  )}
+                </div>
+                
                 <TranscriptionDisplay 
                   isTranscribing={isTranscribing} 
                   isRecording={isRecording}
@@ -555,7 +657,7 @@ function HomeContent() {
         
         <footer className="py-4 text-center text-sm text-muted-foreground">
           <div className="flex items-center justify-center gap-4">
-            <div className="w-20 h-20 transition-all duration-300 hover:scale-105">
+            <div className="w-28 h-28 transition-all duration-300 hover:scale-105">
               <img 
                 src="/Arkenza_trademark_final.png" 
                 alt="Arkenza Logo" 
@@ -570,7 +672,7 @@ function HomeContent() {
       {/* Welcome Info Modal */}
       <Dialog open={showWelcomeInfo} onOpenChange={setShowWelcomeInfo}>
         <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto">
-          <div className="absolute top-4 left-4 w-16 h-16 transition-all duration-300 hover:scale-110">
+          <div className="absolute top-4 left-4 w-24 h-24 transition-all duration-300 hover:scale-110">
             <img 
               src="/Arkenza_trademark_final.png" 
               alt="Arkenza Logo" 
@@ -626,58 +728,96 @@ function HomeContent() {
         <DialogContent className="sm:max-w-[600px]">
           <DialogHeader>
             <DialogTitle className="text-2xl font-bold text-primary text-center">
-              We'd love your feedback!
+              {surveySubmitted ? "Thank you for your feedback!" : "We'd love your feedback!"}
             </DialogTitle>
             <DialogDescription className="text-center pt-2">
-              You've used Voice Mirror 5 times. Could you share your experience with us?
+              {surveySubmitted 
+                ? "Your response has been recorded." 
+                : "You've used Voice Mirror 5 times. Could you share your experience with us?"}
             </DialogDescription>
           </DialogHeader>
           
-          <div className="space-y-6 py-4">
-            <div className="space-y-2">
-              <h4 className="font-medium">How would you rate your experience?</h4>
-              <div className="flex justify-between items-center px-6 py-2">
-                {[1, 2, 3, 4, 5].map((rating) => (
-                  <button 
-                    key={rating} 
-                    className="flex flex-col items-center gap-1 transition-all hover:scale-110"
-                  >
-                    <div className="w-10 h-10 rounded-full border-2 border-primary flex items-center justify-center text-primary hover:bg-primary hover:text-primary-foreground">
-                      {rating}
-                    </div>
-                    <span className="text-xs text-muted-foreground">
-                      {rating === 1 ? "Poor" : rating === 5 ? "Excellent" : ""}
-                    </span>
-                  </button>
-                ))}
+          {surveySubmitted ? (
+            <div className="py-8 flex justify-center items-center">
+              <div className="flex flex-col items-center gap-4">
+                <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center">
+                  <Check className="h-8 w-8 text-primary" />
+                </div>
+                <p className="text-center text-muted-foreground">
+                  We appreciate your input and will use it to improve the app.
+                </p>
               </div>
             </div>
-            
-            <div className="space-y-2">
-              <h4 className="font-medium">What do you like most about our app?</h4>
-              <textarea 
-                className="w-full min-h-[80px] rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-                placeholder="Share your thoughts..."
-              />
-            </div>
-            
-            <div className="space-y-2">
-              <h4 className="font-medium">How can we improve?</h4>
-              <textarea 
-                className="w-full min-h-[80px] rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-                placeholder="Your suggestions help us get better..."
-              />
-            </div>
-          </div>
-          
-          <DialogFooter className="gap-2 sm:gap-0">
-            <Button variant="outline" onClick={handleSurveyCompletion}>
-              Maybe later
-            </Button>
-            <Button onClick={handleSurveyCompletion}>
-              Submit feedback
-            </Button>
-          </DialogFooter>
+          ) : (
+            <>
+              <div className="space-y-6 py-4">
+                <div className="space-y-2">
+                  <h4 className="font-medium">How would you rate your experience?</h4>
+                  <div className="flex justify-between items-center px-6 py-2">
+                    {[1, 2, 3, 4, 5].map((rating) => (
+                      <button 
+                        key={rating} 
+                        className={`flex flex-col items-center gap-1 transition-all hover:scale-110 ${
+                          surveyRating === rating ? 'scale-110' : ''
+                        }`}
+                        onClick={() => setSurveyRating(rating)}
+                      >
+                        <div className={`w-10 h-10 rounded-full border-2 flex items-center justify-center ${
+                          surveyRating === rating 
+                            ? 'bg-primary text-primary-foreground border-primary' 
+                            : 'border-primary text-primary hover:bg-primary/10'
+                        }`}>
+                          {rating}
+                        </div>
+                        <span className="text-xs text-muted-foreground">
+                          {rating === 1 ? "Poor" : rating === 5 ? "Excellent" : ""}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                
+                <div className="space-y-2">
+                  <h4 className="font-medium">What do you like most about our app?</h4>
+                  <textarea 
+                    className="w-full min-h-[80px] rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                    placeholder="Share your thoughts..."
+                    value={surveyPositiveFeedback}
+                    onChange={(e) => setSurveyPositiveFeedback(e.target.value)}
+                  />
+                </div>
+                
+                <div className="space-y-2">
+                  <h4 className="font-medium">How can we improve?</h4>
+                  <textarea 
+                    className="w-full min-h-[80px] rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                    placeholder="Your suggestions help us get better..."
+                    value={surveyImprovementFeedback}
+                    onChange={(e) => setSurveyImprovementFeedback(e.target.value)}
+                  />
+                </div>
+              </div>
+              
+              <DialogFooter className="gap-2 sm:gap-0">
+                <Button variant="outline" onClick={handleSurveyCompletion}>
+                  Maybe later
+                </Button>
+                <Button 
+                  onClick={handleSurveySubmission}
+                  disabled={isSubmittingSurvey || surveyRating === null}
+                >
+                  {isSubmittingSurvey ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Submitting...
+                    </>
+                  ) : (
+                    "Submit feedback"
+                  )}
+                </Button>
+              </DialogFooter>
+            </>
+          )}
         </DialogContent>
       </Dialog>
     </div>

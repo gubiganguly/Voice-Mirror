@@ -102,6 +102,9 @@ export function AudioRecorder({ onRecordingComplete, onRecordingStart }: AudioRe
       const exactDuration = Math.floor((Date.now() - startTimeRef.current) / 1000);
       setLastRecordingDuration(exactDuration);
       
+      // Store the duration in sessionStorage for app/page.tsx to access
+      sessionStorage.setItem("lastRecordingDuration", exactDuration.toString());
+      
       mediaRecorderRef.current.stop();
       setIsRecording(false);
     }
