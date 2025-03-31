@@ -684,6 +684,9 @@ function HomeContent() {
             <DialogTitle className="text-2xl font-bold text-primary text-center">
               Welcome to Arkenza Voice Mirror
             </DialogTitle>
+            <div className="text-xs text-muted-foreground text-center mt-1">
+              version 0.0
+            </div>
           </DialogHeader>
           
           <div className="space-y-4 text-muted-foreground text-base py-4">

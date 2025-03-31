@@ -11,9 +11,10 @@ import { Badge } from "@/components/ui/badge";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line, PieChart, Pie, Cell, Legend } from 'recharts';
 import { getSurveys, getSurveysByRating, getAverageRating, getSurveyById, deleteSurvey } from "@/lib/firebase/surveys/surveyModel";
 import { Survey } from "@/lib/firebase/surveys/surveySchema";
-import { AlertCircle, BarChart as BarChartIcon, PieChart as PieChartIcon, LineChart as LineChartIcon, Clock, Star, Trash2, Loader2, ArrowLeft, Filter, Download } from "lucide-react";
+import { AlertCircle, BarChart as BarChartIcon, PieChart as PieChartIcon, LineChart as LineChartIcon, Clock, Star, Trash2, Loader2, ArrowLeft, Filter, Download, Lock } from "lucide-react";
 import { format } from "date-fns";
 import { Timestamp } from "firebase/firestore";
+import { Input } from "@/components/ui/input";
 
 export default function AdminPage() {
   const [surveys, setSurveys] = useState<Survey[]>([]);
@@ -25,10 +26,29 @@ export default function AdminPage() {
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [activeTab, setActiveTab] = useState("overview");
+  
+  // Password protection state
+  const [isPasswordDialogOpen, setIsPasswordDialogOpen] = useState(true);
+  const [password, setPassword] = useState("");
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [passwordError, setPasswordError] = useState(false);
 
   useEffect(() => {
-    fetchData();
-  }, []);
+    if (isAuthenticated) {
+      fetchData();
+    }
+  }, [isAuthenticated]);
+
+  const verifyPassword = () => {
+    const correctPassword = process.env.NEXT_PUBLIC_ADMIN_PASSWORD;
+    if (password === correctPassword) {
+      setIsAuthenticated(true);
+      setIsPasswordDialogOpen(false);
+      setPasswordError(false);
+    } else {
+      setPasswordError(true);
+    }
+  };
 
   const fetchData = async () => {
     setLoading(true);
@@ -154,11 +174,69 @@ export default function AdminPage() {
       : format(new Date(date), 'MMM d, yyyy h:mm a');
   };
 
-  if (loading) {
+  if (loading && isAuthenticated) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-background">
         <Loader2 className="h-12 w-12 animate-spin text-primary mb-4" />
         <p className="text-lg text-muted-foreground">Loading survey data...</p>
+      </div>
+    );
+  }
+
+  // Password Dialog Component
+  const PasswordDialog = () => (
+    <Dialog open={isPasswordDialogOpen} onOpenChange={(open) => {
+      // Prevent closing the dialog by clicking outside when not authenticated
+      if (isAuthenticated) {
+        setIsPasswordDialogOpen(open);
+      }
+    }}>
+      <DialogContent className="sm:max-w-[425px]">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Lock className="h-5 w-5" />
+            Admin Authentication Required
+          </DialogTitle>
+          <DialogDescription>
+            Please enter the admin password to access this page.
+          </DialogDescription>
+        </DialogHeader>
+        
+        <div className="py-4">
+          <Input
+            type="password"
+            placeholder="Enter password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            className={passwordError ? "border-destructive" : ""}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                verifyPassword();
+              }
+            }}
+          />
+          {passwordError && (
+            <p className="text-sm text-destructive mt-2">Incorrect password. Please try again.</p>
+          )}
+        </div>
+        
+        <DialogFooter>
+          <Button
+            onClick={verifyPassword}
+            className="w-full"
+          >
+            Authenticate
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+
+  // render password dialog if not authenticated
+  if (!isAuthenticated) {
+    return (
+      <div className="min-h-screen bg-background">
+        <PasswordDialog />
       </div>
     );
   }
