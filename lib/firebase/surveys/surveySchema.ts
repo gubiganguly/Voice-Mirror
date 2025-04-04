@@ -4,6 +4,7 @@ export interface Survey {
   id?: string;
   createdAt: Date | number | Timestamp;
   rating: number;  // 1-5 star rating
+  easeOfUse: number | null; // Add the new field
   positiveFeedback: string; // What they like most
   improvementFeedback: string; // How we can improve
   recordingTimes: number[]; // List of recording durations in seconds (will store up to 5 entries)
@@ -21,6 +22,7 @@ export const surveyConverter = {
     return {
       createdAt: survey.createdAt,
       rating: survey.rating,
+      easeOfUse: survey.easeOfUse,
       positiveFeedback: survey.positiveFeedback,
       improvementFeedback: survey.improvementFeedback,
       recordingTimes: survey.recordingTimes,
@@ -32,6 +34,7 @@ export const surveyConverter = {
       id: snapshot.id,
       createdAt: data.createdAt?.toDate() || data.createdAt,
       rating: data.rating,
+      easeOfUse: data.easeOfUse,
       positiveFeedback: data.positiveFeedback,
       improvementFeedback: data.improvementFeedback,
       recordingTimes: data.recordingTimes || [],

@@ -21,19 +21,28 @@ const surveysCollection = collection(FIRESTORE_DB, 'surveys').withConverter(surv
 /**
  * Add a new survey to Firestore
  */
-export async function addSurvey(surveyData: SurveyFormData, recordingTimes: number[] = []): Promise<string> {
+export async function addSurvey(
+  surveyData: { 
+    rating: number; 
+    easeOfUse: number | null;
+    positiveFeedback: string; 
+    improvementFeedback: string; 
+  }, 
+  recordingTimes: number[]
+): Promise<string> {
   try {
-    const survey: Survey = {
+    const surveyCollection = collection(FIRESTORE_DB, "surveys");
+    
+    const docRef = await addDoc(surveyCollection, {
       ...surveyData,
-      createdAt: serverTimestamp() as Timestamp,
-      recordingTimes: recordingTimes.slice(0, 5), // Ensure we only store up to 5 recording times
-    };
-
-    const docRef = await addDoc(surveysCollection, survey);
+      recordingTimes,
+      createdAt: serverTimestamp()
+    });
+    
     return docRef.id;
   } catch (error) {
-    console.error('Error adding survey:', error);
-    throw new Error('Failed to submit survey');
+    console.error("Error adding survey:", error);
+    throw error;
   }
 }
 

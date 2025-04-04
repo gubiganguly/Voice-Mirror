@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { AppHeader } from "@/components/AppHeader";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -27,9 +27,8 @@ export default function AdminPage() {
   const [isDeleting, setIsDeleting] = useState(false);
   const [activeTab, setActiveTab] = useState("overview");
   
-  // Password protection state
-  const [isPasswordDialogOpen, setIsPasswordDialogOpen] = useState(true);
-  const [password, setPassword] = useState("");
+  // Use ref for password state to prevent re-renders
+  const passwordInputRef = useRef<HTMLInputElement>(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [passwordError, setPasswordError] = useState(false);
 
@@ -41,9 +40,10 @@ export default function AdminPage() {
 
   const verifyPassword = () => {
     const correctPassword = process.env.NEXT_PUBLIC_ADMIN_PASSWORD;
-    if (password === correctPassword) {
+    const inputPassword = passwordInputRef.current?.value || "";
+    
+    if (inputPassword === correctPassword) {
       setIsAuthenticated(true);
-      setIsPasswordDialogOpen(false);
       setPasswordError(false);
     } else {
       setPasswordError(true);
@@ -92,7 +92,7 @@ export default function AdminPage() {
 
   const exportToCSV = () => {
     // Create CSV content from surveys
-    const headers = ["ID", "Date", "Rating", "Positive Feedback", "Improvement Feedback", "Recording Times"];
+    const headers = ["ID", "Date", "Rating", "Ease of Use", "Positive Feedback", "Improvement Feedback", "Recording Times"];
     const csvRows = [
       headers.join(','),
       ...surveys.map(survey => {
@@ -107,6 +107,7 @@ export default function AdminPage() {
           survey.id,
           dateValue.toISOString(),
           survey.rating,
+          survey.easeOfUse === null ? '' : survey.easeOfUse,
           `"${survey.positiveFeedback.replace(/"/g, '""')}"`,
           `"${survey.improvementFeedback.replace(/"/g, '""')}"`,
           `"${survey.recordingTimes.join(', ')}"`
@@ -183,60 +184,42 @@ export default function AdminPage() {
     );
   }
 
-  // Password Dialog Component
-  const PasswordDialog = () => (
-    <Dialog open={isPasswordDialogOpen} onOpenChange={(open) => {
-      // Prevent closing the dialog by clicking outside when not authenticated
-      if (isAuthenticated) {
-        setIsPasswordDialogOpen(open);
-      }
-    }}>
-      <DialogContent className="sm:max-w-[425px]">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Lock className="h-5 w-5" />
-            Admin Authentication Required
-          </DialogTitle>
-          <DialogDescription>
-            Please enter the admin password to access this page.
-          </DialogDescription>
-        </DialogHeader>
-        
-        <div className="py-4">
-          <Input
-            type="password"
-            placeholder="Enter password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            className={passwordError ? "border-destructive" : ""}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                verifyPassword();
-              }
-            }}
-          />
-          {passwordError && (
-            <p className="text-sm text-destructive mt-2">Incorrect password. Please try again.</p>
-          )}
-        </div>
-        
-        <DialogFooter>
-          <Button
-            onClick={verifyPassword}
-            className="w-full"
-          >
-            Authenticate
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-
-  // render password dialog if not authenticated
+  // Simplified password component that doesn't use Dialog
   if (!isAuthenticated) {
     return (
-      <div className="min-h-screen bg-background">
-        <PasswordDialog />
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="w-full max-w-md p-8 space-y-4 bg-card rounded-lg border shadow-sm">
+          <div className="text-center space-y-2">
+            <h1 className="text-2xl font-bold">Admin Authentication</h1>
+            <p className="text-muted-foreground">Please enter the admin password to continue</p>
+          </div>
+          
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <form onSubmit={(e) => {
+                e.preventDefault();
+                verifyPassword();
+              }}>
+                <input
+                  type="password"
+                  ref={passwordInputRef}
+                  placeholder="Enter password"
+                  className={`w-full px-3 py-2 border rounded-md ${passwordError ? "border-red-500" : "border-input"}`}
+                />
+                <button 
+                  type="submit" 
+                  className="w-full mt-4 py-2 bg-primary text-primary-foreground rounded-md"
+                >
+                  Log In
+                </button>
+              </form>
+              
+              {passwordError && (
+                <p className="text-sm text-red-500 mt-2">Incorrect password. Please try again.</p>
+              )}
+            </div>
+          </div>
+        </div>
       </div>
     );
   }
@@ -501,6 +484,7 @@ export default function AdminPage() {
                       <TableRow>
                         <TableHead>Date</TableHead>
                         <TableHead>Rating</TableHead>
+                        <TableHead>Ease of Use</TableHead>
                         <TableHead>Positive Feedback</TableHead>
                         <TableHead>Improvement Suggestions</TableHead>
                         <TableHead>Recording Times</TableHead>
@@ -510,7 +494,7 @@ export default function AdminPage() {
                     <TableBody>
                       {surveys.length === 0 ? (
                         <TableRow>
-                          <TableCell colSpan={6} className="text-center h-32 text-muted-foreground">
+                          <TableCell colSpan={7} className="text-center h-32 text-muted-foreground">
                             No survey responses found
                           </TableCell>
                         </TableRow>
@@ -527,6 +511,17 @@ export default function AdminPage() {
                                   survey.rating >= 3 ? "warning" : "destructive"
                                 }>
                                   {survey.rating} ★
+                                </Badge>
+                              </div>
+                            </TableCell>
+                            <TableCell>
+                              <div className="flex items-center">
+                                <Badge variant={
+                                  survey.easeOfUse === null ? "secondary" :
+                                  survey.easeOfUse >= 4 ? "success" :
+                                  survey.easeOfUse >= 3 ? "warning" : "destructive"
+                                }>
+                                  {survey.easeOfUse === null ? '—' : `${survey.easeOfUse} ★`}
                                 </Badge>
                               </div>
                             </TableCell>

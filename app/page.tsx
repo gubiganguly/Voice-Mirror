@@ -40,10 +40,12 @@ function HomeContent() {
   const [recordingCount, setRecordingCount] = useState(0);
   const [showSurveyModal, setShowSurveyModal] = useState(false);
   const [surveyRating, setSurveyRating] = useState<number | null>(null);
+  const [surveyEaseOfUse, setSurveyEaseOfUse] = useState<number | null>(null);
   const [surveyPositiveFeedback, setSurveyPositiveFeedback] = useState("");
   const [surveyImprovementFeedback, setSurveyImprovementFeedback] = useState("");
   const [isSubmittingSurvey, setIsSubmittingSurvey] = useState(false);
   const [surveySubmitted, setSurveySubmitted] = useState(false);
+  const [surveyShown, setSurveyShown] = useState(false);
   const { 
     voiceModel, 
     promptProcessing, 
@@ -150,9 +152,10 @@ function HomeContent() {
       }
     }
     
-    // Check if we've reached 5 recordings and show the survey
-    if (newCount === 5) {
+    // Show survey only once after the 5th recording
+    if (newCount === 5 && !surveyShown) {
       setShowSurveyModal(true);
+      setSurveyShown(true);
     }
     
     // Move to transcription step
@@ -414,8 +417,8 @@ function HomeContent() {
   // Handle survey submission
   const handleSurveySubmission = async () => {
     // Make sure required fields are filled
-    if (surveyRating === null) {
-      // Show error or alert that rating is required
+    if (surveyRating === null || surveyEaseOfUse === null) {
+      // Show error or alert that both ratings are required
       return;
     }
     
@@ -425,6 +428,7 @@ function HomeContent() {
       // Prepare the survey data
       const surveyData = {
         rating: surveyRating,
+        easeOfUse: surveyEaseOfUse,
         positiveFeedback: surveyPositiveFeedback,
         improvementFeedback: surveyImprovementFeedback
       };
@@ -434,6 +438,7 @@ function HomeContent() {
       
       // Reset the survey form
       setSurveyRating(null);
+      setSurveyEaseOfUse(null);
       setSurveyPositiveFeedback("");
       setSurveyImprovementFeedback("");
       recordingDurationsRef.current = [];
@@ -445,7 +450,6 @@ function HomeContent() {
       setTimeout(() => {
         setShowSurveyModal(false);
         setSurveySubmitted(false);
-        setRecordingCount(0); // Reset counter
       }, 2000);
       
     } catch (error) {
@@ -458,14 +462,18 @@ function HomeContent() {
 
   // Update the handleSurveyCompletion function
   const handleSurveyCompletion = () => {
-    // This function now just closes the modal without submitting data
     setShowSurveyModal(false);
-    setRecordingCount(0); // Reset counter back to 0
     
     // Reset survey form
     setSurveyRating(null);
+    setSurveyEaseOfUse(null);
     setSurveyPositiveFeedback("");
     setSurveyImprovementFeedback("");
+  };
+
+  // Add a function to open the survey manually
+  const openSurvey = () => {
+    setShowSurveyModal(true);
   };
 
   return (
@@ -473,7 +481,18 @@ function HomeContent() {
       <div className="container mx-auto px-4 max-w-5xl">
         <div className="flex items-center justify-between">
           <AppHeader />
-          <Settings />
+          <div className="flex items-center gap-2">
+            <Button 
+              variant="outline" 
+              size="sm" 
+              onClick={openSurvey} 
+              className="flex items-center gap-1"
+            >
+              <FileText className="h-4 w-4" />
+              Feedback
+            </Button>
+            <Settings />
+          </div>
         </div>
         
         <main className="flex-1 py-4">
@@ -501,13 +520,7 @@ function HomeContent() {
                   {/* Recording counter indicator */}
                   <div className="flex items-center gap-2">
                     <div className="text-xs text-muted-foreground">
-                      Recordings: <span className="font-medium text-primary">{recordingCount}/5</span>
-                    </div>
-                    <div className="w-16 h-1.5 bg-muted rounded-full overflow-hidden">
-                      <div 
-                        className="h-full bg-primary transition-all duration-300" 
-                        style={{ width: `${(recordingCount / 5) * 100}%` }}
-                      />
+                      Total Recordings: <span className="font-medium text-primary">{recordingCount}</span>
                     </div>
                   </div>
                 </div>
@@ -726,7 +739,7 @@ function HomeContent() {
       {/* Survey Modal */}
       <Dialog open={showSurveyModal} onOpenChange={(open) => {
         setShowSurveyModal(open);
-        if (!open) setRecordingCount(0); // Reset counter when modal is closed
+        // Don't reset counter when modal is closed
       }}>
         <DialogContent className="sm:max-w-[600px]">
           <DialogHeader>
@@ -780,6 +793,33 @@ function HomeContent() {
                   </div>
                 </div>
                 
+                {/* New question for ease of use */}
+                <div className="space-y-2">
+                  <h4 className="font-medium">How easy was it to use the Voice Mirror?</h4>
+                  <div className="flex justify-between items-center px-6 py-2">
+                    {[1, 2, 3, 4, 5].map((rating) => (
+                      <button 
+                        key={rating} 
+                        className={`flex flex-col items-center gap-1 transition-all hover:scale-110 ${
+                          surveyEaseOfUse === rating ? 'scale-110' : ''
+                        }`}
+                        onClick={() => setSurveyEaseOfUse(rating)}
+                      >
+                        <div className={`w-10 h-10 rounded-full border-2 flex items-center justify-center ${
+                          surveyEaseOfUse === rating 
+                            ? 'bg-primary text-primary-foreground border-primary' 
+                            : 'border-primary text-primary hover:bg-primary/10'
+                        }`}>
+                          {rating}
+                        </div>
+                        <span className="text-xs text-muted-foreground">
+                          {rating === 1 ? "Difficult" : rating === 5 ? "Very Easy" : ""}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                
                 <div className="space-y-2">
                   <h4 className="font-medium">What do you like most about our app?</h4>
                   <textarea 
@@ -807,7 +847,7 @@ function HomeContent() {
                 </Button>
                 <Button 
                   onClick={handleSurveySubmission}
-                  disabled={isSubmittingSurvey || surveyRating === null}
+                  disabled={isSubmittingSurvey || surveyRating === null || surveyEaseOfUse === null}
                 >
                   {isSubmittingSurvey ? (
                     <>
